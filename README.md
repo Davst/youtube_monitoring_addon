@@ -1,5 +1,7 @@
 # YouTube Monitoring Add-on
 
+[![Home Assistant에 앱 저장소 추가](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fredchupa%2Fyoutube_monitoring_addon)
+
 **독립형** Home Assistant Add-on. YouTube 쿠키만으로 시청 기록을 **일별/월별**로 조회합니다.  
 
 부모의 유튜브 계정으로 유튜브 영상을 많이 보는 아이들이 올바르게 시청하고 있는지 확인하고 싶은 마음에 개발하였습니다.  
