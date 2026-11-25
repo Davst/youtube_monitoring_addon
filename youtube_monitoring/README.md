@@ -1,56 +1,47 @@
 # YouTube Monitoring Add-on
 
-YouTube 쿠키만으로 시청 기록을 **일별/월별**로 조회하는 Home Assistant Add-on입니다.
+A standalone Home Assistant Add-on that tracks your YouTube watch history (daily/monthly), subscriptions, and recommended videos using only YouTube cookies.
 
-## 주요 기능
+> Full documentation: [English README](../README.md) | [한국어 README](../README.ko.md)
 
-- 쿠키 기반 시청 기록 조회 (갱신 간격 기본 60초)
-- 누적 저장 (`/data/yt_history.json`, `yt_subscriptions.json`). **Shorts 미기록**
-- 일별 기록, **월별 통계 달력 뷰** (월 선택 → 일별 시청 개수, 날짜 클릭 시 영상 목록)
-- **구독 채널**: 썸네일, 구독자 수, @핸들, **이름순(한글→영어→특수문자) / 구독자 순** 정렬
-- 월별 구독 변경 (신규/취소 추적)
-- 추천 영상 (갱신 간격 설정 가능, 수동 새로고침 10분 쿨다운)
-- 웹 UI (쿠키 상태 표시, **쿠키 업데이트** 버튼), Ingress 지원
-- **쿠키 자동 갱신**: 응답 쿠키 저장 + 약 10분마다 Google 쿠키 회전, 만료 시 자동 복구 시도 후 HA 알림
-- 실시간 푸시 (`POST /api/ingest`, Shorts URL 스킵)
+## Key Features
 
-## 빠른 시작
+- Cookie-based watch history polling (default interval: 60s)
+- Automatic cookie refresh (saves response cookies + rotates Google cookies every 10 minutes, with HA notification on failure)
+- Multi-channel collection (`scan_all_channels`: merges main channel and Brand Accounts)
+- Daily history & Monthly calendar view (Shorts excluded)
+- Subscriptions list with thumbnails, subscriber counts, `@handles`, and sorting (Alphabetical / By Subscribers)
+- Monthly subscription changes (added / removed)
+- Recommended videos with manual refresh (10-minute cooldown)
+- Bilingual Web UI (**English / 한국어** toggle button) & Ingress sidebar panel (**YouTube Watch History**)
+- Optional MQTT Discovery sensors & real-time push (`POST /api/ingest`)
 
-1. **설정** → **애드온** → YouTube Monitoring 설치
-2. **웹 UI 열기** → 오른쪽 위 **쿠키 업데이트**에서 `youtube_cookies.txt` 등록 (시크릿 창에서 로그인 → 내보내기 → 창 닫기)
-3. 이후에는 에드온이 쿠키를 스스로 갱신합니다
+## Quick Start
 
-## 설정
+1. Install **YouTube Monitoring** from **Settings** → **Add-ons**
+2. Open the **YouTube Watch History** panel → click **Update Cookies** (top right) and upload `youtube_cookies.txt` (export from an Incognito window, then close the window immediately)
+3. The add-on will automatically refresh your cookies going forward
 
-| 항목 | 설명 | 기본값 |
-|------|------|--------|
-| cookies_path | 쿠키 파일 경로 | `/config/youtube_cookies.txt` |
-| scan_interval | 시청 기록/구독 갱신(초) | 60 |
-| port | API 서버 포트 | 8765 |
-| duplicate_minutes | 같은 영상 재감지 무시(분) | 5 |
-| fetch_recommended | 추천 영상 조회 | true |
-| scan_interval_recommended | 추천 영상 갱신(초) | 1800 |
-| timezone | 로그·시청 기록 날짜용 타임존 | Asia/Seoul |
-| notify_cookie_invalid | 쿠키 만료·자동 복구 실패 시 HA 알림 | true |
-| scan_all_channels | 계정의 모든 채널(본채널+브랜드) 기록 합쳐서 수집 | true |
+## Configuration
 
-## 문서
+| Option | Description | Default |
+|--------|-------------|---------|
+| `cookies_path` | Path to cookies file | `/config/youtube_cookies.txt` |
+| `scan_interval` | History/subscription polling interval (sec) | `60` |
+| `port` | API server port | `8765` |
+| `duplicate_minutes` | Duplicate video ignore window (min) | `5` |
+| `fetch_recommended` | Fetch recommended videos | `true` |
+| `scan_interval_recommended` | Recommended videos interval (sec) | `1800` |
+| `timezone` | Timezone for logs and daily grouping | `Asia/Seoul` |
+| `notify_cookie_invalid` | HA notification on cookie expiration | `true` |
+| `scan_all_channels` | Collect history & subscriptions across all channels | `true` |
 
-- [DOCS.md](DOCS.md) - API, 설정, 사용법 상세
-- [CHANGELOG.md](CHANGELOG.md) - 버전별 변경 이력
+## Documentation
 
-## 면책 조항
+- [English README](../README.md) / [한국어 README](../README.ko.md)
+- [DOCS.md](DOCS.md) - API & detailed reference
+- [CHANGELOG.md](CHANGELOG.md) - Version history
 
-비공식 프로젝트이며 Google/YouTube와 무관합니다. 쿠키 사용 책임은 사용자에게 있으며, 소프트웨어는 "있는 그대로" 제공됩니다.
-
-## 자주 묻는 질문
-
-시청 기록 지연, 쿠키 오류, Shorts 구분 등 자세한 FAQ는 [저장소 루트 README](../README.md#자주-묻는-질문)를 참조하세요.
-
-## 기여
-
-버그 제보, 기능 제안, Pull Request를 환영합니다. [Issues](https://github.com/redchupa/youtube_monitoring_addon/issues)에서 이슈를 생성해 주세요.
-
-## 라이센스
+## License
 
 [MIT License](../LICENSE)

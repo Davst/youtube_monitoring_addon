@@ -486,6 +486,7 @@ class CookieUploadApiTest(CookieTestBase):
             status, data = self.post(COOKIES_TXT)
         self.assertEqual(status, 200, data)
         self.assertTrue(data["cookies_valid"])
+        self.assertEqual(data["result"], "valid")
         self.assertEqual(data["cookie_count"], 4)
         self.assertTrue(os.path.exists(self.path))
 
@@ -557,6 +558,17 @@ class CookieUploadApiTest(CookieTestBase):
             html = r.read().decode("utf-8")
         self.assertIn("btn-cookie-update", html)
         self.assertIn("api/cookies", html)
+
+    def test_ui_has_language_toggle_and_i18n(self) -> None:
+        with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/", timeout=10) as r:
+            html = r.read().decode("utf-8")
+        self.assertIn("btn-lang-toggle", html)
+        self.assertIn("toggleLanguage", html)
+        self.assertIn("YouTube Watch History", html)
+        self.assertIn("YouTube 시청 기록", html)
+        with open(os.path.join(ROOT, "config.yaml"), encoding="utf-8") as f:
+            cfg = f.read()
+        self.assertIn('panel_title: "YouTube Watch History"', cfg)
 
 
 if __name__ == "__main__":

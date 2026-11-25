@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.5.9] - 2026-11-25
+
+### 추가
+- **웹 UI 한영 전환 버튼** (`EN` / `한국어`): 브라우저 언어 자동 감지 + 선택 언어 로컬 저장(`localStorage`), 헤더 버튼으로 즉시 전환
+- **영문 GitHub README** (`README.md` 영문 기본 제공, `README.ko.md` 한국어 문서 분리 및 상단 언어 전환 링크 추가)
+
+### 변경
+- Home Assistant 사이드바 패널 이름 변경: `YouTube 시청 기록` → `YouTube Watch History`
+- 애드온 설명(`config.yaml`) 및 쿠키 만료 알림을 해외 사용자도 이해할 수 있도록 영문/병기 지원
+
 ## [1.5.8] - 2026-11-10
 
 ### 수정

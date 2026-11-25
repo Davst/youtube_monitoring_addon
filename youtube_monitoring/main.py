@@ -245,17 +245,20 @@ def _notify_cookie_invalid(problem: str) -> None:
     if not load_options().get("notify_cookie_invalid", True):
         return
     if problem == "missing":
-        reason = "쿠키 파일이 없거나 읽을 수 없습니다."
+        reason = "Cookie file is missing or unreadable. / 쿠키 파일이 없거나 읽을 수 없습니다."
     else:
-        reason = "YouTube 로그인 세션이 만료됐고, 자동 갱신으로 복구하지 못했습니다."
+        reason = (
+            "YouTube login session expired and automatic refresh could not recover it. / "
+            "YouTube 로그인 세션이 만료됐고, 자동 갱신으로 복구하지 못했습니다."
+        )
     _ha_service("persistent_notification/create", {
         "notification_id": COOKIE_NOTIFICATION_ID,
-        "title": "YouTube Monitoring: 쿠키 갱신 필요",
+        "title": "YouTube Monitoring: Cookie Update Required",
         "message": (
             f"{reason}\n\n"
-            "에드온 웹 UI(YouTube 시청 기록 패널)의 **쿠키 업데이트** 버튼으로 새 쿠키를 넣어 주세요.\n\n"
-            "오래 유지되게 하려면: 브라우저 **시크릿 창**에서 YouTube 로그인 → "
-            "'Get cookies.txt LOCALLY'로 내보내기 → **시크릿 창을 바로 닫기**."
+            "Open the **YouTube Watch History** panel and click **Update Cookies** (쿠키 업데이트) to upload new cookies.\n\n"
+            "Tip: Sign in to YouTube in an **Incognito/Private window** → export with "
+            "'Get cookies.txt LOCALLY' → **close the window immediately**."
         ),
     })
 
@@ -511,13 +514,17 @@ class YouTubeMonitoringHandler(BaseHTTPRequestHandler):
         if fetcher.cookies_valid:
             _reset_cookie_state()
             fetcher.rotate_cookies(force=True)
+            result_code = "valid"
             message = "새 쿠키가 적용됐습니다. 이제 자동으로 갱신됩니다."
         elif fetcher.logged_out_detected:
+            result_code = "logged_out"
             message = "쿠키는 저장됐지만 YouTube가 로그아웃 상태로 응답합니다. 로그인한 상태에서 다시 내보내 주세요."
         else:
+            result_code = "unverified"
             message = "쿠키는 저장됐지만 아직 확인하지 못했습니다. 잠시 후 상태를 확인해 주세요."
         self.send_json({
             "status": "ok",
+            "result": result_code,
             "cookie_count": count,
             "cookies_valid": fetcher.cookies_valid,
             "message": message,
@@ -686,21 +693,21 @@ class YouTubeMonitoringHandler(BaseHTTPRequestHandler):
 
 
 def _get_ui_html() -> str:
-    """웹 UI HTML (인라인). Ingress 시 상대 경로로 /api/history 호출."""
+    """웹 UI HTML (인라인). Ingress 시 상대 경로로 /api/history 호출. 한영 전환 지원."""
     return """<!DOCTYPE html>
-<html lang="ko">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>YouTube 시청 기록</title>
+    <title>YouTube Watch History</title>
     <style>
         * { box-sizing: border-box; }
         :root { --ha-primary: #03a9f4; --ha-bg: #111; --ha-card: #1c1c1c; --ha-text: #e1e1e1; --ha-text-secondary: #9e9e9e; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 0; background: var(--ha-bg); color: var(--ha-text); min-height: 100vh; }
         .container { max-width: 900px; margin: 0 auto; padding: 20px; }
-        h1 { color: #ff0000; font-size: 1.5rem; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+        h1 { color: #ff0000; font-size: 1.5rem; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
         h1 .icon { font-size: 1.2em; }
-        .tabs { display: flex; gap: 8px; margin-bottom: 20px; }
+        .tabs { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
         .tab { padding: 10px 20px; background: var(--ha-card); border: none; border-radius: 8px; color: var(--ha-text); cursor: pointer; font-size: 0.95rem; }
         .tab:hover { background: #2a2a2a; }
         .tab:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -734,7 +741,7 @@ def _get_ui_html() -> str:
         .status { padding: 8px 12px; border-radius: 6px; margin-bottom: 16px; font-size: 0.9rem; }
         .status.ok { background: rgba(0,200,83,0.2); color: #4caf50; }
         .status.error { background: rgba(244,67,54,0.2); color: #f44336; }
-        .cookie-status { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 20px; font-size: 0.85rem; font-weight: 500; margin-left: 12px; }
+        .cookie-status { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 20px; font-size: 0.85rem; font-weight: 500; margin-left: 8px; }
         .cookie-status.connected { background: rgba(0,200,83,0.25); color: #4caf50; }
         .cookie-status.disconnected { background: rgba(244,67,54,0.25); color: #f44336; }
         .cookie-status.loading { background: rgba(158,158,158,0.25); color: var(--ha-text-secondary); }
@@ -754,9 +761,11 @@ def _get_ui_html() -> str:
         .calendar-day.has-count:hover { background: #2a2a2a; }
         .calendar-day-detail { margin-top: 20px; padding-top: 16px; border-top: 1px solid #333; }
         .calendar-day-detail h4 { margin: 0 0 12px 0; font-size: 0.95rem; color: var(--ha-text-secondary); }
-        .cookie-btn { margin-left: 8px; padding: 6px 12px; border-radius: 20px; border: 1px solid #444; background: transparent; color: var(--ha-text-secondary); font-size: 0.8rem; cursor: pointer; }
+        .cookie-btn { margin-left: 4px; padding: 6px 12px; border-radius: 20px; border: 1px solid #444; background: transparent; color: var(--ha-text-secondary); font-size: 0.8rem; cursor: pointer; }
         .cookie-btn:hover { background: #2a2a2a; color: var(--ha-text); }
         .cookie-btn.attention { border-color: #f44336; color: #f44336; }
+        .lang-btn { margin-left: auto; padding: 6px 12px; border-radius: 20px; border: 1px solid #444; background: var(--ha-card); color: var(--ha-text); font-size: 0.8rem; font-weight: 600; cursor: pointer; }
+        .lang-btn:hover { background: #2a2a2a; border-color: var(--ha-primary); color: var(--ha-primary); }
         .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: none; align-items: center; justify-content: center; z-index: 100; padding: 16px; }
         .modal-backdrop.open { display: flex; }
         .modal { background: var(--ha-card); border-radius: 12px; padding: 20px; width: 100%; max-width: 560px; max-height: 90vh; overflow-y: auto; }
@@ -773,48 +782,45 @@ def _get_ui_html() -> str:
 </head>
 <body>
     <div class="container">
-        <h1 style="display:flex; align-items:center; flex-wrap:wrap;">
-            <span class="icon">▶</span> YouTube 시청 기록
-            <span id="cookie-status" class="cookie-status loading">확인 중...</span>
-            <button id="btn-cookie-update" class="cookie-btn" type="button">쿠키 업데이트</button>
+        <h1>
+            <span class="icon">▶</span>
+            <span id="page-title">YouTube Watch History</span>
+            <span id="cookie-status" class="cookie-status loading">Checking...</span>
+            <button id="btn-cookie-update" class="cookie-btn" type="button">Update Cookies</button>
+            <button id="btn-lang-toggle" class="lang-btn" type="button" aria-label="Toggle language">한국어</button>
         </h1>
         <div id="cookie-modal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="cookie-modal-title">
             <div class="modal">
-                <h3 id="cookie-modal-title">YouTube 쿠키 업데이트</h3>
-                <div style="font-size:0.85rem; color:var(--ha-text-secondary);">한 번 넣으면 에드온이 약 10분마다 스스로 갱신합니다. 오래 유지하려면 아래 순서를 지켜 주세요.</div>
-                <ol>
-                    <li>브라우저 <b>시크릿 창</b>을 열고 YouTube에 로그인</li>
-                    <li>확장 프로그램 <b>Get cookies.txt LOCALLY</b>로 youtube.com 쿠키 내보내기</li>
-                    <li><b>시크릿 창을 바로 닫기</b> (같은 세션을 브라우저가 계속 쓰면 쿠키가 빨리 무효화됩니다)</li>
-                    <li>파일을 선택하거나 내용을 아래에 붙여넣고 저장</li>
-                </ol>
+                <h3 id="cookie-modal-title">Update YouTube Cookies</h3>
+                <div id="cookie-modal-desc" style="font-size:0.85rem; color:var(--ha-text-secondary);"></div>
+                <ol id="cookie-modal-steps"></ol>
                 <textarea id="cookie-text" placeholder="# Netscape HTTP Cookie File&#10;.youtube.com	TRUE	/	TRUE	..." spellcheck="false" autocomplete="off"></textarea>
                 <div class="modal-actions">
                     <input type="file" id="cookie-file" accept=".txt,text/plain">
-                    <button id="btn-cookie-cancel" class="tab" type="button">닫기</button>
-                    <button id="btn-cookie-save" class="tab active" type="button">저장 및 확인</button>
+                    <button id="btn-cookie-cancel" class="tab" type="button">Close</button>
+                    <button id="btn-cookie-save" class="tab active" type="button">Save &amp; Verify</button>
                 </div>
                 <div id="cookie-msg" class="modal-msg"></div>
                 <div id="cookie-meta" class="modal-meta"></div>
             </div>
         </div>
         <div class="tabs">
-            <button class="tab active" data-tab="daily">일별 기록</button>
-            <button class="tab" data-tab="monthly">월별 통계</button>
-            <button class="tab" data-tab="subscriptions">구독 채널</button>
-            <button class="tab" data-tab="monthly-subs">월별 구독</button>
-            <button class="tab tab-recommended" data-tab="recommended" style="display:none;">추천 영상</button>
+            <button class="tab active" data-tab="daily" id="tab-daily">Daily History</button>
+            <button class="tab" data-tab="monthly" id="tab-monthly">Monthly Stats</button>
+            <button class="tab" data-tab="subscriptions" id="tab-subscriptions">Subscriptions</button>
+            <button class="tab" data-tab="monthly-subs" id="tab-monthly-subs">Sub Changes</button>
+            <button class="tab tab-recommended" data-tab="recommended" id="tab-recommended" style="display:none;">Recommended</button>
         </div>
 
         <div id="panel-daily" class="panel active">
-            <div id="status" class="status">로딩 중...</div>
+            <div id="status" class="status">Loading...</div>
             <div id="daily-content"></div>
         </div>
 
         <div id="panel-monthly" class="panel">
             <div class="calendar-wrap">
                 <div class="calendar-month-row">
-                    <label for="month-select" class="calendar-month-title">월 선택</label>
+                    <label for="month-select" id="month-select-label" class="calendar-month-title">Select Month</label>
                     <select id="month-select"></select>
                 </div>
                 <div id="calendar-grid" class="calendar-grid"></div>
@@ -824,29 +830,231 @@ def _get_ui_html() -> str:
 
         <div id="panel-subscriptions" class="panel">
             <div class="panel-header" style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;">
-                <span>정렬</span>
-                <button id="btn-subscription-sort" class="tab" style="padding:6px 14px; font-size:0.85rem;">기본 순</button>
+                <span id="subs-sort-label">Sort</span>
+                <button id="btn-subscription-sort" class="tab" style="padding:6px 14px; font-size:0.85rem;">Default</button>
             </div>
-            <div id="subscriptions-content" class="empty">로딩 중...</div>
+            <div id="subscriptions-content" class="empty">Loading...</div>
         </div>
 
         <div id="panel-monthly-subs" class="panel">
-            <div id="monthly-subs-content" class="empty">로딩 중...</div>
+            <div id="monthly-subs-content" class="empty">Loading...</div>
         </div>
 
         <div id="panel-recommended" class="panel">
             <div class="panel-header" style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;">
-                <span>추천 영상</span>
+                <span id="recommended-header-label">Recommended</span>
                 <div>
-                    <button id="btn-refresh-recommended" class="tab" style="padding:6px 14px; font-size:0.85rem;">새로고침</button>
+                    <button id="btn-refresh-recommended" class="tab" style="padding:6px 14px; font-size:0.85rem;">Refresh</button>
                     <span id="recommended-cooldown" style="font-size:0.8rem; color:var(--ha-text-secondary); margin-left:8px;"></span>
                 </div>
             </div>
-            <div id="recommended-content" class="empty">로딩 중...</div>
+            <div id="recommended-content" class="empty">Loading...</div>
         </div>
     </div>
 
     <script>
+        const LANG_STORAGE_KEY = 'yt_monitoring_lang';
+        const MONTH_NAMES_EN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const I18N = {
+            ko: {
+                locale: 'ko-KR',
+                pageTitle: 'YouTube 시청 기록',
+                checking: '확인 중...',
+                cookieConnected: '쿠키 연결됨',
+                cookieDisconnected: '쿠키 사용 불가',
+                connError: '연결 오류',
+                cookieUpdateBtn: '쿠키 업데이트',
+                langToggleLabel: 'EN',
+                langToggleTitle: 'Switch to English',
+                cookieModalTitle: 'YouTube 쿠키 업데이트',
+                cookieModalDesc: '한 번 넣으면 에드온이 약 10분마다 스스로 갱신합니다. 오래 유지하려면 아래 순서를 지켜 주세요.',
+                cookieSteps: [
+                    '브라우저 <b>시크릿 창</b>을 열고 YouTube에 로그인',
+                    '확장 프로그램 <b>Get cookies.txt LOCALLY</b>로 youtube.com 쿠키 내보내기',
+                    '<b>시크릿 창을 바로 닫기</b> (같은 세션을 브라우저가 계속 쓰면 쿠키가 빨리 무효화됩니다)',
+                    '파일을 선택하거나 내용을 아래에 붙여넣고 저장',
+                ],
+                close: '닫기',
+                saveAndVerify: '저장 및 확인',
+                tabDaily: '일별 기록',
+                tabMonthly: '월별 통계',
+                tabSubscriptions: '구독 채널',
+                tabMonthlySubs: '월별 구독',
+                tabRecommended: '추천 영상',
+                loading: '로딩 중...',
+                refreshing: '새로고침 중...',
+                selectMonth: '월 선택',
+                noHistoryOption: '기록 없음',
+                sort: '정렬',
+                sortDefault: '기본 순',
+                sortSubscribers: '구독자 순',
+                sortLabelSubscribers: '구독자 많은 순',
+                sortLabelDefault: '한글·영어·특수문자 순',
+                subscribedChannels: label => '구독 중인 채널 (' + label + ')',
+                refresh: '새로고침',
+                recommendedTitle: '추천 영상',
+                cookieInvalidNotice: '쿠키가 유효하지 않습니다. 오른쪽 위 [쿠키 업데이트] 버튼으로 새 쿠키를 넣어 주세요.',
+                dailySummary: (days, videos) => days + '일치 기록 (' + videos + '개 영상)',
+                noHistoryWait: '기록이 없습니다. YouTube 시청 후 잠시 기다려 주세요.',
+                noWatchHistory: '아직 시청 기록이 없습니다.',
+                videoCount: n => n + '개',
+                weekdays: ['일', '월', '화', '수', '목', '금', '토'],
+                formatMonth: (y, mo) => y + '년 ' + mo + '월',
+                loadingSubs: '구독 채널 정보를 불러오는 중...',
+                noSubs: '구독 채널이 없거나 쿠키를 확인해 주세요.',
+                noMonthlySubs: '월별 구독 변경 내역이 없습니다. 구독 추가/해지 시 자동 기록됩니다.',
+                newSubs: n => '신규 구독 (' + n + ')',
+                removedSubs: n => '구독 취소 (' + n + ')',
+                cooldownMins: m => m + '분 후 사용 가능',
+                cooldownSecs: s => s + '초 후 사용 가능',
+                loadingRecommended: '추천 영상 정보를 불러오는 중...',
+                errorPrefix: '오류: ',
+                cookieEmptyErr: '쿠키 파일을 선택하거나 내용을 붙여넣어 주세요.',
+                cookieVerifying: '저장 후 YouTube 로그인 상태를 확인하는 중... (최대 1분)',
+                cookieSaveFailed: status => '저장 실패 (HTTP ' + status + ')',
+                cookieCountSuffix: n => ' (' + n + '개 쿠키)',
+                cookieResultValid: '새 쿠키가 적용됐습니다. 이제 자동으로 갱신됩니다.',
+                cookieResultLoggedOut: '쿠키는 저장됐지만 YouTube가 로그아웃 상태로 응답합니다. 로그인한 상태에서 다시 내보내 주세요.',
+                cookieResultUnverified: '쿠키는 저장됐지만 아직 확인하지 못했습니다. 잠시 후 상태를 확인해 주세요.',
+                cookieErrForbidden: 'HA 웹 UI(Ingress)에서만 쿠키를 바꿀 수 있습니다.',
+                cookieErrSize: '쿠키 내용이 비었거나 너무 큽니다 (최대 1MB).',
+                cookieErrEncoding: 'UTF-8 텍스트 파일이 아닙니다.',
+                cookieRotateOk: '성공',
+                cookieRotateRejected: '거부됨',
+                cookieMeta: (rotAt, okLabel, savedAt) => '마지막 자동 갱신: ' + rotAt + ' (' + okLabel + ') · 마지막 저장: ' + savedAt,
+            },
+            en: {
+                locale: 'en-US',
+                pageTitle: 'YouTube Watch History',
+                checking: 'Checking...',
+                cookieConnected: 'Cookies OK',
+                cookieDisconnected: 'Cookies Invalid',
+                connError: 'Connection Error',
+                cookieUpdateBtn: 'Update Cookies',
+                langToggleLabel: '한국어',
+                langToggleTitle: '한국어로 전환',
+                cookieModalTitle: 'Update YouTube Cookies',
+                cookieModalDesc: 'Once uploaded, the add-on refreshes cookies automatically every ~10 minutes. Follow these steps to keep your session valid longer:',
+                cookieSteps: [
+                    'Open a browser <b>Incognito / Private window</b> and sign in to YouTube',
+                    'Export youtube.com cookies using the <b>Get cookies.txt LOCALLY</b> extension',
+                    '<b>Close the Incognito window immediately</b> (sharing the same session with a browser can invalidate cookies quickly)',
+                    'Select the file or paste its contents below, then click Save',
+                ],
+                close: 'Close',
+                saveAndVerify: 'Save & Verify',
+                tabDaily: 'Daily History',
+                tabMonthly: 'Monthly Stats',
+                tabSubscriptions: 'Subscriptions',
+                tabMonthlySubs: 'Sub Changes',
+                tabRecommended: 'Recommended',
+                loading: 'Loading...',
+                refreshing: 'Refreshing...',
+                selectMonth: 'Select Month',
+                noHistoryOption: 'No history',
+                sort: 'Sort',
+                sortDefault: 'Default',
+                sortSubscribers: 'By Subscribers',
+                sortLabelSubscribers: 'Most Subscribers',
+                sortLabelDefault: 'Alphabetical',
+                subscribedChannels: label => 'Subscribed Channels (' + label + ')',
+                refresh: 'Refresh',
+                recommendedTitle: 'Recommended',
+                cookieInvalidNotice: 'Cookies are invalid. Click [Update Cookies] at the top right to upload new cookies.',
+                dailySummary: (days, videos) => days + (days === 1 ? ' day (' : ' days (') + videos + (videos === 1 ? ' video)' : ' videos)'),
+                noHistoryWait: 'No history yet. Watch a video on YouTube and wait a moment.',
+                noWatchHistory: 'No watch history yet.',
+                videoCount: n => n + (n === 1 ? ' video' : ' videos'),
+                weekdays: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+                formatMonth: (y, mo) => MONTH_NAMES_EN[mo - 1] + ' ' + y,
+                loadingSubs: 'Loading subscriptions...',
+                noSubs: 'No subscriptions found or please check your cookies.',
+                noMonthlySubs: 'No monthly subscription changes yet. Additions and removals are tracked automatically.',
+                newSubs: n => 'Subscribed (' + n + ')',
+                removedSubs: n => 'Unsubscribed (' + n + ')',
+                cooldownMins: m => 'Available in ' + m + 'm',
+                cooldownSecs: s => 'Available in ' + s + 's',
+                loadingRecommended: 'Loading recommended videos...',
+                errorPrefix: 'Error: ',
+                cookieEmptyErr: 'Please select a cookie file or paste its contents.',
+                cookieVerifying: 'Saving and verifying YouTube login status... (up to 1 min)',
+                cookieSaveFailed: status => 'Save failed (HTTP ' + status + ')',
+                cookieCountSuffix: n => ' (' + n + ' cookies)',
+                cookieResultValid: 'New cookies applied. They will now refresh automatically.',
+                cookieResultLoggedOut: 'Cookies were saved, but YouTube responded as logged out. Please sign in and export again.',
+                cookieResultUnverified: 'Cookies were saved, but could not be verified yet. Please check the status shortly.',
+                cookieErrForbidden: 'Cookies can only be updated via the Home Assistant Web UI (Ingress).',
+                cookieErrSize: 'Cookie content is empty or too large (max 1MB).',
+                cookieErrEncoding: 'File is not valid UTF-8 text.',
+                cookieRotateOk: 'OK',
+                cookieRotateRejected: 'Rejected',
+                cookieMeta: (rotAt, okLabel, savedAt) => 'Last auto-refresh: ' + rotAt + ' (' + okLabel + ') · Last saved: ' + savedAt,
+            },
+        };
+
+        function detectInitialLang() {
+            try {
+                const saved = localStorage.getItem(LANG_STORAGE_KEY);
+                if (saved === 'ko' || saved === 'en') return saved;
+            } catch {}
+            const nav = (navigator.language || navigator.userLanguage || '').toLowerCase();
+            return nav.startsWith('ko') ? 'ko' : 'en';
+        }
+
+        let currentLang = detectInitialLang();
+        let hasLoaded = false;
+        let selectedCalendarDate = null;
+
+        function t(key) {
+            return I18N[currentLang][key];
+        }
+
+        function applyStaticTranslations() {
+            document.documentElement.lang = currentLang;
+            document.title = t('pageTitle');
+            document.getElementById('page-title').textContent = t('pageTitle');
+            document.getElementById('btn-cookie-update').textContent = t('cookieUpdateBtn');
+            const langBtn = document.getElementById('btn-lang-toggle');
+            langBtn.textContent = t('langToggleLabel');
+            langBtn.title = t('langToggleTitle');
+            document.getElementById('cookie-modal-title').textContent = t('cookieModalTitle');
+            document.getElementById('cookie-modal-desc').textContent = t('cookieModalDesc');
+            document.getElementById('cookie-modal-steps').innerHTML = t('cookieSteps').map(s => '<li>' + s + '</li>').join('');
+            document.getElementById('btn-cookie-cancel').textContent = t('close');
+            document.getElementById('btn-cookie-save').textContent = t('saveAndVerify');
+            document.getElementById('tab-daily').textContent = t('tabDaily');
+            document.getElementById('tab-monthly').textContent = t('tabMonthly');
+            document.getElementById('tab-subscriptions').textContent = t('tabSubscriptions');
+            document.getElementById('tab-monthly-subs').textContent = t('tabMonthlySubs');
+            document.getElementById('tab-recommended').textContent = t('tabRecommended');
+            document.getElementById('month-select-label').textContent = t('selectMonth');
+            document.getElementById('subs-sort-label').textContent = t('sort');
+            document.getElementById('recommended-header-label').textContent = t('recommendedTitle');
+            document.getElementById('btn-refresh-recommended').textContent = t('refresh');
+            if (!hasLoaded) {
+                document.getElementById('cookie-status').textContent = t('checking');
+                document.getElementById('status').textContent = t('loading');
+                document.getElementById('subscriptions-content').textContent = t('loading');
+                document.getElementById('monthly-subs-content').textContent = t('loading');
+                document.getElementById('recommended-content').textContent = t('loading');
+            }
+        }
+
+        function toggleLanguage() {
+            currentLang = currentLang === 'ko' ? 'en' : 'ko';
+            try { localStorage.setItem(LANG_STORAGE_KEY, currentLang); } catch {}
+            applyStaticTranslations();
+            if (hasLoaded) {
+                renderCookieStatus();
+                renderDaily();
+                renderMonthly();
+                renderSubscriptions();
+                renderMonthlySubscriptions();
+                renderRecommended();
+                renderCookieMeta();
+            }
+        }
+
         let historyData = { by_date: {}, monthly_stats: {}, monthly_breakdown: {}, subscriptions: null, monthly_subscription_changes: {}, recommended: null, fetch_recommended: true, recommended_refresh_available_at: 0, recommended_refresh_retry_after: 0 };
         let subscriptionSortBy = 'subscribers';
 
@@ -855,6 +1063,7 @@ def _get_ui_html() -> str:
                 const base = window.location.pathname.endsWith('/') ? window.location.pathname : window.location.pathname + '/';
                 const r = await fetch(base + 'api/history');
                 historyData = await r.json();
+                hasLoaded = true;
                 renderCookieStatus();
                 const recTab = document.querySelector('.tab-recommended');
                 if (recTab) recTab.style.display = (historyData.fetch_recommended === true) ? '' : 'none';
@@ -865,9 +1074,9 @@ def _get_ui_html() -> str:
                 renderRecommended();
             } catch (e) {
                 document.getElementById('cookie-status').className = 'cookie-status disconnected';
-                document.getElementById('cookie-status').textContent = '연결 오류';
+                document.getElementById('cookie-status').textContent = t('connError');
                 document.getElementById('status').className = 'status error';
-                document.getElementById('status').textContent = '오류: ' + e.message;
+                document.getElementById('status').textContent = t('errorPrefix') + e.message;
             }
         }
 
@@ -879,13 +1088,13 @@ def _get_ui_html() -> str:
             if (btn) btn.classList.toggle('attention', valid === false);
             if (valid === true) {
                 el.className = 'cookie-status connected';
-                el.textContent = '쿠키 연결됨';
+                el.textContent = t('cookieConnected');
             } else if (valid === false) {
                 el.className = 'cookie-status disconnected';
-                el.textContent = '쿠키 사용 불가';
+                el.textContent = t('cookieDisconnected');
             } else {
                 el.className = 'cookie-status loading';
-                el.textContent = '확인 중...';
+                el.textContent = t('checking');
             }
         }
 
@@ -896,14 +1105,15 @@ def _get_ui_html() -> str:
 
             if (historyData.cookies_valid === false && dates.length === 0) {
                 status.className = 'status error';
-                status.textContent = '쿠키가 유효하지 않습니다. 오른쪽 위 [쿠키 업데이트] 버튼으로 새 쿠키를 넣어 주세요.';
+                status.textContent = t('cookieInvalidNotice');
             } else {
                 status.className = 'status ok';
-                status.textContent = dates.length ? dates.length + '일치 기록 (' + dates.reduce((s,d) => s + (historyData.by_date[d]?.length||0), 0) + '개 영상)' : '기록이 없습니다. YouTube 시청 후 잠시 기다려 주세요.';
+                const totalVideos = dates.reduce((s, d) => s + (historyData.by_date[d]?.length || 0), 0);
+                status.textContent = dates.length ? t('dailySummary')(dates.length, totalVideos) : t('noHistoryWait');
             }
 
             if (dates.length === 0) {
-                content.innerHTML = '<div class="empty">아직 시청 기록이 없습니다.</div>';
+                content.innerHTML = '<div class="empty">' + escapeHtml(t('noWatchHistory')) + '</div>';
                 return;
             }
 
@@ -913,7 +1123,7 @@ def _get_ui_html() -> str:
                     <div class="date-group" data-date="${escapeHtml(date)}">
                         <div class="date-header">
                             <span class="date">${escapeHtml(date)}</span>
-                            <span class="count">${entries.length}개</span>
+                            <span class="count">${escapeHtml(t('videoCount')(entries.length))}</span>
                             <span class="chevron">▼</span>
                         </div>
                         <div class="date-content">
@@ -946,6 +1156,25 @@ def _get_ui_html() -> str:
             return Array.from(set).sort().reverse();
         }
 
+        function renderCalendarDayDetail(dateKey, byDate, dayDetailEl) {
+            if (!dayDetailEl || !dateKey) return;
+            const entries = byDate[dateKey] || [];
+            if (!entries.length) {
+                dayDetailEl.style.display = 'none';
+                return;
+            }
+            dayDetailEl.style.display = 'block';
+            dayDetailEl.innerHTML = '<h4>' + escapeHtml(dateKey) + ' · ' + escapeHtml(t('videoCount')(entries.length)) + '</h4>' +
+                entries.map(v => `
+                    <a href="${safeUrl(v.url)}" target="_blank" rel="noopener noreferrer" class="video" style="text-decoration:none;color:inherit;display:block;margin-bottom:8px;">
+                        <div class="info">
+                            <div class="title">${escapeHtml(v.title)}</div>
+                            <div class="channel">${escapeHtml(v.channel)}</div>
+                        </div>
+                    </a>
+                `).join('');
+        }
+
         function renderMonthly() {
             const wrap = document.getElementById('calendar-grid');
             const selectEl = document.getElementById('month-select');
@@ -955,37 +1184,43 @@ def _get_ui_html() -> str:
             const months = getMonthsFromByDate();
             if (months.length === 0) {
                 wrap.innerHTML = '';
-                selectEl.innerHTML = '<option value="">기록 없음</option>';
+                selectEl.innerHTML = '<option value="">' + escapeHtml(t('noHistoryOption')) + '</option>';
                 dayDetailEl.style.display = 'none';
+                selectedCalendarDate = null;
                 return;
             }
 
+            const prevSelected = selectEl.value;
             const byDate = historyData.by_date || {};
             selectEl.innerHTML = months.map(m => {
                 const [y, mo] = m.split('-');
-                const label = y + '년 ' + parseInt(mo, 10) + '월';
+                const label = t('formatMonth')(y, parseInt(mo, 10));
                 return '<option value="' + escapeHtml(m) + '">' + escapeHtml(label) + '</option>';
             }).join('');
 
-            const selectedMonth = selectEl.value || months[0];
+            const selectedMonth = months.includes(prevSelected) ? prevSelected : months[0];
             selectEl.value = selectedMonth;
             renderCalendarForMonth(selectedMonth, byDate, wrap, dayDetailEl);
+            if (selectedCalendarDate && selectedCalendarDate.startsWith(selectedMonth)) {
+                renderCalendarDayDetail(selectedCalendarDate, byDate, dayDetailEl);
+            }
 
             selectEl.onchange = () => {
+                selectedCalendarDate = null;
                 dayDetailEl.style.display = 'none';
                 renderCalendarForMonth(selectEl.value, historyData.by_date || {}, wrap, dayDetailEl);
             };
         }
 
         function renderCalendarForMonth(monthStr, byDate, gridEl, dayDetailEl) {
-            const weekdays = ['일', '월', '화', '수', '목', '금', '토'];
+            const weekdays = t('weekdays');
             const [y, m] = monthStr.split('-').map(Number);
             const first = new Date(y, m - 1, 1);
             const last = new Date(y, m, 0);
             const firstDay = first.getDay();
             const daysInMonth = last.getDate();
 
-            let html = weekdays.map(w => '<div class="calendar-weekday">' + w + '</div>').join('');
+            let html = weekdays.map(w => '<div class="calendar-weekday">' + escapeHtml(w) + '</div>').join('');
 
             const pad = n => (n < 10 ? '0' + n : '' + n);
             const emptyCells = firstDay;
@@ -1011,19 +1246,8 @@ def _get_ui_html() -> str:
 
             gridEl.querySelectorAll('.calendar-day.has-count').forEach(cell => {
                 cell.addEventListener('click', () => {
-                    const dateKey = cell.dataset.date;
-                    const entries = byDate[dateKey] || [];
-                    if (!dayDetailEl) return;
-                    dayDetailEl.style.display = 'block';
-                    dayDetailEl.innerHTML = '<h4>' + escapeHtml(dateKey) + ' · ' + entries.length + '개</h4>' +
-                        entries.map(v => `
-                            <a href="${safeUrl(v.url)}" target="_blank" rel="noopener noreferrer" class="video" style="text-decoration:none;color:inherit;display:block;margin-bottom:8px;">
-                                <div class="info">
-                                    <div class="title">${escapeHtml(v.title)}</div>
-                                    <div class="channel">${escapeHtml(v.channel)}</div>
-                                </div>
-                            </a>
-                        `).join('');
+                    selectedCalendarDate = cell.dataset.date;
+                    renderCalendarDayDetail(selectedCalendarDate, byDate, dayDetailEl);
                 });
             });
         }
@@ -1033,26 +1257,26 @@ def _get_ui_html() -> str:
             const btn = document.getElementById('btn-subscription-sort');
             const sub = historyData.subscriptions;
             if (!sub) {
-                el.innerHTML = '<div class="empty">구독 채널 정보를 불러오는 중...</div>';
+                el.innerHTML = '<div class="empty">' + escapeHtml(t('loadingSubs')) + '</div>';
                 return;
             }
             const total = sub.total_count || 0;
             let channels = sub.channels || [];
             if (total === 0 && channels.length === 0) {
-                el.innerHTML = '<div class="empty">구독 채널이 없거나 쿠키를 확인해 주세요.</div>';
+                el.innerHTML = '<div class="empty">' + escapeHtml(t('noSubs')) + '</div>';
                 return;
             }
             if (subscriptionSortBy === 'subscribers') {
                 channels = [...channels].sort((a, b) => (b.subscriber_count || 0) - (a.subscriber_count || 0));
-                if (btn) btn.textContent = '기본 순';
+                if (btn) btn.textContent = t('sortDefault');
             } else {
-                if (btn) btn.textContent = '구독자 순';
+                if (btn) btn.textContent = t('sortSubscribers');
             }
-            const sortLabel = subscriptionSortBy === 'subscribers' ? '구독자 많은 순' : '한글·영어·특수문자 순';
+            const sortLabel = subscriptionSortBy === 'subscribers' ? t('sortLabelSubscribers') : t('sortLabelDefault');
             el.innerHTML = `
                 <div class="stat-card" style="margin-bottom:16px; text-align:left;">
                     <div class="value">${total}</div>
-                    <div class="label">구독 중인 채널 (${sortLabel})</div>
+                    <div class="label">${escapeHtml(t('subscribedChannels')(sortLabel))}</div>
                 </div>
                 <div class="channel-list" style="display:grid; gap:8px; text-align:left;">
                     ${channels.map(c => {
@@ -1064,7 +1288,7 @@ def _get_ui_html() -> str:
                         const meta = [handle, subs].filter(Boolean).join(' · ');
                         const desc = c.description_snippet ? escapeHtml(String(c.description_snippet).substring(0, 80)) : '';
                         return `
-                        <a href="${url}" target="_blank" class="video channel-item" style="text-decoration:none; color:inherit; cursor:pointer;">
+                        <a href="${url}" target="_blank" rel="noopener noreferrer" class="video channel-item" style="text-decoration:none; color:inherit; cursor:pointer;">
                             <img src="${thumb}" alt="" style="width:56px; height:56px; object-fit:cover; border-radius:50%; flex-shrink:0;">
                             <div class="info" style="flex:1; min-width:0;">
                                 <div class="title">${name}</div>
@@ -1082,7 +1306,7 @@ def _get_ui_html() -> str:
             const changes = historyData.monthly_subscription_changes || {};
             const entries = Object.entries(changes);
             if (entries.length === 0) {
-                el.innerHTML = '<div class="empty">월별 구독 변경 내역이 없습니다. 구독 추가/해지 시 자동 기록됩니다.</div>';
+                el.innerHTML = '<div class="empty">' + escapeHtml(t('noMonthlySubs')) + '</div>';
                 return;
             }
             el.innerHTML = entries.map(([month, data]) => {
@@ -1098,13 +1322,13 @@ def _get_ui_html() -> str:
                     <div class="date-content">
                         ${added.length ? `
                         <div style="margin-bottom:12px;">
-                            <div style="font-size:0.85rem; color:#4caf50; margin-bottom:6px;">신규 구독 (${added.length})</div>
+                            <div style="font-size:0.85rem; color:#4caf50; margin-bottom:6px;">${escapeHtml(t('newSubs')(added.length))}</div>
                             ${added.map(c => `<div class="video" style="cursor:default; padding:8px 12px;"><div class="info"><div class="title">${escapeHtml(c)}</div></div></div>`).join('')}
                         </div>
                         ` : ''}
                         ${removed.length ? `
                         <div>
-                            <div style="font-size:0.85rem; color:#f44336; margin-bottom:6px;">구독 취소 (${removed.length})</div>
+                            <div style="font-size:0.85rem; color:#f44336; margin-bottom:6px;">${escapeHtml(t('removedSubs')(removed.length))}</div>
                             ${removed.map(c => `<div class="video" style="cursor:default; padding:8px 12px; opacity:0.8;"><div class="info"><div class="title">${escapeHtml(c)}</div></div></div>`).join('')}
                         </div>
                         ` : ''}
@@ -1129,7 +1353,7 @@ def _get_ui_html() -> str:
                 btn.disabled = true;
                 const mins = Math.floor(remaining / 60);
                 const secs = remaining % 60;
-                span.textContent = mins > 0 ? mins + '분 후 사용 가능' : secs + '초 후 사용 가능';
+                span.textContent = mins > 0 ? t('cooldownMins')(mins) : t('cooldownSecs')(secs);
             } else {
                 btn.disabled = false;
                 span.textContent = '';
@@ -1164,7 +1388,7 @@ def _get_ui_html() -> str:
             const videos = historyData.recommended || [];
             updateRecommendedCooldown();
             if (!videos.length) {
-                el.innerHTML = '<div class="empty">추천 영상 정보를 불러오는 중...</div>';
+                el.innerHTML = '<div class="empty">' + escapeHtml(t('loadingRecommended')) + '</div>';
                 return;
             }
             el.innerHTML = videos.map(v => `
@@ -1195,7 +1419,7 @@ def _get_ui_html() -> str:
             if (!iso) return '';
             try {
                 const d = new Date(iso);
-                return d.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
+                return d.toLocaleTimeString(t('locale'), { hour: '2-digit', minute: '2-digit' });
             } catch { return ''; }
         }
 
@@ -1209,11 +1433,12 @@ def _get_ui_html() -> str:
             });
         });
 
+        document.getElementById('btn-lang-toggle')?.addEventListener('click', toggleLanguage);
         document.getElementById('btn-refresh-recommended')?.addEventListener('click', refreshRecommended);
         document.getElementById('btn-subscription-sort')?.addEventListener('click', async () => {
             subscriptionSortBy = subscriptionSortBy === 'default' ? 'subscribers' : 'default';
             const el = document.getElementById('subscriptions-content');
-            if (el) el.innerHTML = '<div class="empty">새로고침 중...</div>';
+            if (el) el.innerHTML = '<div class="empty">' + escapeHtml(t('refreshing')) + '</div>';
             await load();
         });
         function apiBase() {
@@ -1224,9 +1449,9 @@ def _get_ui_html() -> str:
             const el = document.getElementById('cookie-meta');
             const m = historyData.cookie_maintenance;
             if (!el || !m) return;
-            const fmt = ts => ts ? new Date(ts * 1000).toLocaleString('ko-KR') : '-';
-            const ok = m.last_rotate_ok === true ? '성공' : (m.last_rotate_ok === false ? '거부됨' : '-');
-            el.textContent = '마지막 자동 갱신: ' + fmt(m.last_rotate_at) + ' (' + ok + ') · 마지막 저장: ' + fmt(m.last_saved_at);
+            const fmt = ts => ts ? new Date(ts * 1000).toLocaleString(t('locale')) : '-';
+            const ok = m.last_rotate_ok === true ? t('cookieRotateOk') : (m.last_rotate_ok === false ? t('cookieRotateRejected') : '-');
+            el.textContent = t('cookieMeta')(fmt(m.last_rotate_at), ok, fmt(m.last_saved_at));
         }
 
         function openCookieModal() {
@@ -1242,18 +1467,32 @@ def _get_ui_html() -> str:
             document.getElementById('cookie-file').value = '';
         }
 
+        function localizedCookieResult(data) {
+            if (data.result === 'valid') return t('cookieResultValid');
+            if (data.result === 'logged_out') return t('cookieResultLoggedOut');
+            if (data.result === 'unverified') return t('cookieResultUnverified');
+            return data.message || '';
+        }
+
+        function localizedCookieError(data, status) {
+            if (data.error === 'forbidden') return t('cookieErrForbidden');
+            if (data.error === 'invalid_size') return t('cookieErrSize');
+            if (data.error === 'invalid_encoding') return t('cookieErrEncoding');
+            return data.message || t('cookieSaveFailed')(status);
+        }
+
         async function saveCookies() {
             const msg = document.getElementById('cookie-msg');
             const btn = document.getElementById('btn-cookie-save');
             const text = document.getElementById('cookie-text').value;
             if (!text.trim()) {
                 msg.className = 'modal-msg err';
-                msg.textContent = '쿠키 파일을 선택하거나 내용을 붙여넣어 주세요.';
+                msg.textContent = t('cookieEmptyErr');
                 return;
             }
             btn.disabled = true;
             msg.className = 'modal-msg';
-            msg.textContent = '저장 후 YouTube 로그인 상태를 확인하는 중... (최대 1분)';
+            msg.textContent = t('cookieVerifying');
             try {
                 const r = await fetch(apiBase() + 'api/cookies', {
                     method: 'POST',
@@ -1263,18 +1502,18 @@ def _get_ui_html() -> str:
                 const data = await r.json().catch(() => ({}));
                 if (!r.ok) {
                     msg.className = 'modal-msg err';
-                    msg.textContent = data.message || ('저장 실패 (HTTP ' + r.status + ')');
+                    msg.textContent = localizedCookieError(data, r.status);
                     return;
                 }
                 msg.className = 'modal-msg ' + (data.cookies_valid ? 'ok' : 'err');
-                msg.textContent = data.message + ' (' + data.cookie_count + '개 쿠키)';
+                msg.textContent = localizedCookieResult(data) + t('cookieCountSuffix')(data.cookie_count);
                 document.getElementById('cookie-text').value = '';
                 document.getElementById('cookie-file').value = '';
                 await load();
                 renderCookieMeta();
             } catch (e) {
                 msg.className = 'modal-msg err';
-                msg.textContent = '오류: ' + e.message;
+                msg.textContent = t('errorPrefix') + e.message;
             } finally {
                 btn.disabled = false;
             }
@@ -1295,6 +1534,7 @@ def _get_ui_html() -> str:
             reader.readAsText(f);
         });
 
+        applyStaticTranslations();
         load();
         setInterval(load, 60000);
         setInterval(updateRecommendedCooldown, 1000);
