@@ -13,6 +13,14 @@
 
 ---
 
+## 스크린샷
+
+실제 시청 기록이 아닌 데모 데이터로 찍은 화면입니다.
+
+| 일별 시청 기록 | 구독 채널 |
+|:---:|:---:|
+| <img src="https://raw.githubusercontent.com/redchupa/youtube_monitoring_addon/main/images/screenshots/daily-ko.png" alt="일별 시청 기록" width="100%"> | <img src="https://raw.githubusercontent.com/redchupa/youtube_monitoring_addon/main/images/screenshots/subscriptions-ko.png" alt="구독 채널" width="100%"> |
+
 ## 주요 특징
 
 - **쿠키 기반**: YouTube 시청 기록 페이지 직접 조회 (갱신 간격 기본 60초)

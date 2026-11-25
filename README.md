@@ -12,6 +12,14 @@ This add-on was created for parents who want to check whether their children are
 
 ---
 
+## Screenshots
+
+Taken with made-up demo data (no real watch history).
+
+| Daily history | Subscriptions |
+|:---:|:---:|
+| <img src="https://raw.githubusercontent.com/redchupa/youtube_monitoring_addon/main/images/screenshots/daily-en.png" alt="Daily history" width="100%"> | <img src="https://raw.githubusercontent.com/redchupa/youtube_monitoring_addon/main/images/screenshots/subscriptions-en.png" alt="Subscriptions" width="100%"> |
+
 ## Key Features
 
 - **Cookie-based Polling**: Directly fetches the YouTube watch history page (default interval: 60 seconds)
