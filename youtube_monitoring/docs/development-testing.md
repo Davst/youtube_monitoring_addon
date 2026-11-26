@@ -4,7 +4,7 @@ This branch is a development build, version `1.6.0-dev.1`, with a separate add-o
 
 ## Install
 
-1. Add the fork `https://github.com/Davst/youtube_monitoring_addon` as an add-on repository only after the tested branch is available on that repository's default branch, or copy the `youtube_monitoring` directory to HA's `/addons/youtube_monitoring_dev` local add-on directory. Home Assistant does not select a feature branch just because it was pushed.
+1. Add `https://github.com/Davst/youtube_monitoring_addon#codex/shorts-observation-support` as the app repository. Home Assistant supports selecting a repository branch with `#branch` ([official repository guide](https://contributors.home-assistant.io/apps/guides/repository/)). Alternatively, copy the `youtube_monitoring` directory to HA's `/addons/youtube_monitoring_dev` local add-on directory.
 2. Refresh the add-on store, find **YouTube Monitoring Dev**, and build/install it. Leave host port 8765 disabled. Open it through **Open Web UI** / Ingress using an HA administrator account.
 3. Set timezone to `Europe/Stockholm` and leave the cookie path as `/data/youtube_cookies.txt`. For an initial smoke test, disable recommendations and all-channel scanning to reduce requests.
 4. Start without cookies first. Expect an empty history and a cookie-invalid status. Confirm the rest of HA and any upstream monitoring installation remain unaffected.
@@ -34,3 +34,5 @@ Stop and uninstall **YouTube Monitoring Dev** only. Its data and MQTT IDs are se
 ## Build verification
 
 The `1.6.0-dev.1` Docker image was built on Slottet and all 60 synthetic tests passed inside it with external networking disabled and the root filesystem read-only. This verifies the packaged Python/runtime behavior; it does not verify live Ingress, Google cookies or MQTT broker reconnection.
+
+The development repository was added to the user's Home Assistant at `http://homeassistant.local/` (port 80). Its registered app slug is `cf954e00_youtube_monitoring_dev`. Installation and live-account verification are separate steps.

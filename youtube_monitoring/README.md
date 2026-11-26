@@ -28,13 +28,13 @@ A standalone Home Assistant Add-on that tracks your YouTube watch history (daily
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `cookies_path` | Path to cookies file | `/config/youtube_cookies.txt` |
+| `cookies_path` | Path to cookies file | `/data/youtube_cookies.txt` |
 | `scan_interval` | History/subscription polling interval (sec) | `60` |
 | `port` | API server port | `8765` |
 | `duplicate_minutes` | Duplicate video ignore window (min) | `5` |
 | `fetch_recommended` | Fetch recommended videos | `true` |
 | `scan_interval_recommended` | Recommended videos interval (sec) | `1800` |
-| `timezone` | Timezone for logs and daily grouping | `Asia/Seoul` |
+| `timezone` | Timezone for logs and daily grouping | `Europe/Stockholm` |
 | `notify_cookie_invalid` | HA notification on cookie expiration | `true` |
 | `scan_all_channels` | Collect history & subscriptions across all channels | `true` |
 
