@@ -46,3 +46,9 @@ python -X utf8 -m unittest discover -s youtube_monitoring/tests
 Tests cover mixed renderer ordering, multiple Shorts per shelf, hyphenated IDs, shared limits, regular-video preservation, archive deduplication, API visibility, normalized ingestion, MQTT discovery/count/type payloads and unchanged-snapshot read cost. Existing cookie tests use synthetic credentials and mocked remote requests. HTTP integration tests bind only localhost and use temporary history files.
 
 Before deployment: verify real current YouTube renderer samples using an explicitly authorized test account, test HA Ingress and MQTT discovery/reconnection against a broker, confirm timezone/observation-day behavior, inspect high-volume sessions and 429 recovery, and verify the cookie/access protections above against the actual HA proxy. Automated tests do not deploy the add-on or access real accounts. See `development-testing.md` for the isolated HA test procedure.
+
+## Development update 1.6.0-dev.2
+
+Shorts can appear in ordinary history cards. Explicit reel/Shorts navigation is now recognized there too. Ambiguous cards with a duration up to three minutes are candidates for a public, unauthenticated HEAD check of the Shorts URL; duration alone does not classify them. A confirmed Shorts endpoint marks the item as a Short, while a redirect to its regular watch URL confirms video. Consent pages, network errors and unrecognized destinations remain unverified.
+
+Checks are cached (up to 5,000 IDs), capped at three per parsed response and paused for five minutes on HTTP 429. Until a candidate is checked it can temporarily remain classified as video. No account cookies accompany these checks. Known archive rows can be promoted from video to Short without adding a duplicate or changing their first-observed timestamp. The latest-item MQTT attributes are republished when its type changes.

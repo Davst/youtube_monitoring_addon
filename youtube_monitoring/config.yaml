@@ -1,5 +1,5 @@
 name: "YouTube Monitoring Dev"
-version: "1.6.0-dev.1"
+version: "1.6.0-dev.2"
 slug: "youtube_monitoring_dev"
 description: "YouTube cookie-based watch history, subscriptions & recommended videos + MQTT Discovery sensors (auto cookie refresh)."
 url: "https://github.com/Davst/youtube_monitoring_addon"

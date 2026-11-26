@@ -17,7 +17,7 @@ import os
 import re
 import time
 from typing import Any
-from urllib.parse import unquote
+from urllib.parse import unquote, urlparse, parse_qs
 
 import requests
 
@@ -99,6 +99,9 @@ class YouTubeHistoryFetcher:
         # 계정의 모든 채널(본채널 + 브랜드 채널) 수집
         self.scan_all_channels = True
         self._thumb_cache: dict[str, str] = {}
+        self._shorts_cache: dict[str, bool] = {}
+        self._shorts_probe_after = 0.0
+        self._shorts_probes_left = 0
         self._channels: list[dict[str, Any]] | None = None
         self._channels_at = 0.0
         self._client_version = DEFAULT_CLIENT_VERSION
@@ -475,6 +478,65 @@ class YouTubeHistoryFetcher:
         merged.sort(key=lambda c: (c.get("channel_name") or ""))
         return merged
 
+    def _classify_history_video(self, video: dict, renderer: dict) -> None:
+        """Use explicit endpoints, then bounded public checks for short-duration cards.
+
+        Duration only selects candidates. It never establishes that an item is a
+        Short. Public checks send no account cookies and cache confirmed results.
+        """
+        video_id = video.get("video_id", "")
+        if video.get("video_type") == "short":
+            return
+
+        def short_command(node, depth=0):
+            if depth > 8:
+                return False
+            if isinstance(node, dict):
+                if node.get("reelWatchEndpoint", {}).get("videoId") == video_id:
+                    return True
+                url = node.get("url")
+                if isinstance(url, str) and urlparse(url).path == f"/shorts/{video_id}":
+                    return True
+                return any(short_command(value, depth + 1) for value in node.values())
+            if isinstance(node, list):
+                return any(short_command(value, depth + 1) for value in node)
+            return False
+
+        is_short = any(short_command(renderer.get(key, {}))
+                       for key in ("navigationEndpoint", "onTap", "rendererContext"))
+        if not is_short:
+            is_short = self._shorts_cache.get(video_id)
+        if is_short is None:
+            duration = video.get("duration", "")
+            match = re.fullmatch(r"(\d{1,2}):(\d{2})", duration)
+            candidate = match and 0 < int(match[1]) * 60 + int(match[2]) <= 180
+            if candidate and self._shorts_probes_left > 0 and time.monotonic() >= self._shorts_probe_after:
+                self._shorts_probes_left -= 1
+                try:
+                    response = requests.head(
+                        f"https://www.youtube.com/shorts/{video_id}?ucbcb=1",
+                        headers={"User-Agent": "Mozilla/5.0"},
+                        timeout=3, allow_redirects=True,
+                    )
+                    if response.status_code == 429:
+                        self._shorts_probe_after = time.monotonic() + 300
+                    elif response.status_code == 200:
+                        final = urlparse(getattr(response, "url", ""))
+                        if final.hostname in ("www.youtube.com", "youtube.com"):
+                            if final.path == f"/shorts/{video_id}":
+                                is_short = True
+                            elif final.path == "/watch" and parse_qs(final.query).get("v") == [video_id]:
+                                is_short = False
+                        if is_short is not None:
+                            if len(self._shorts_cache) >= 5000:
+                                self._shorts_cache.clear()
+                            self._shorts_cache[video_id] = is_short
+                except requests.exceptions.RequestException:
+                    pass  # Consent, network and rate-limit failures are not evidence.
+        video["video_type"] = "short" if is_short else "video"
+        if is_short:
+            video["url"] = f"https://www.youtube.com/shorts/{video_id}"
+
     def _parse_history_data(self, data: dict) -> list[dict[str, Any]]:
         """ytInitialData / InnerTube browse(FEhistory) 응답에서 영상 목록 추출."""
         # 탭 → 섹션 → itemSectionRenderer.contents 경로 수집
@@ -497,6 +559,7 @@ class YouTubeHistoryFetcher:
         if not all_paths:
             return []
 
+        self._shorts_probes_left = 3
         # Preserve the page's order across renderer types; shelf order is only
         # presentation order, not evidence of exact watch times.
         videos: list[dict[str, Any]] = []
@@ -517,7 +580,8 @@ class YouTubeHistoryFetcher:
                     else:
                         video = self._extract_video_from_grid_item(candidate)
                     if video and video.get("video_id") not in seen:
-                        video.setdefault("video_type", "video")
+                        renderer = candidate.get("videoRenderer", candidate.get("lockupViewModel", candidate))
+                        self._classify_history_video(video, renderer)
                         seen.add(video.get("video_id"))
                         videos.append(video)
         return videos

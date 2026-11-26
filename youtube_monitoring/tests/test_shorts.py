@@ -45,6 +45,86 @@ class ShortsPipelineTest(unittest.TestCase):
         self.assertEqual([v['video_id'] for v in videos], ['abc-def_123', 'second12345', 'regular1234'])
         self.assertEqual([v['video_type'] for v in videos], ['short', 'short', 'video'])
 
+    def test_short_presented_as_regular_renderer_is_verified_and_cached(self):
+        from types import SimpleNamespace
+        data = page([{'videoRenderer': {'videoId': 'short123456',
+                     'title': {'simpleText': 'Synthetic short'},
+                     'lengthText': {'simpleText': '0:50'}}}])
+        response = SimpleNamespace(status_code=200, url='https://www.youtube.com/shorts/short123456?ucbcb=1')
+        with patch('app.fetcher.requests.head', return_value=response) as head:
+            first = self.fetcher._parse_history_data(data)
+            second = self.fetcher._parse_history_data(data)
+        self.assertEqual(first[0]['video_type'], 'short')
+        self.assertEqual(second[0]['video_type'], 'short')
+        self.assertEqual(first[0]['url'], 'https://www.youtube.com/shorts/short123456')
+        self.assertEqual(head.call_count, 1)
+
+    def test_short_duration_alone_does_not_make_a_short(self):
+        from types import SimpleNamespace
+        data = page([{'videoRenderer': {'videoId': 'regular1234',
+                     'lengthText': {'simpleText': '0:14'}}}])
+        response = SimpleNamespace(status_code=200, url='https://www.youtube.com/watch?v=regular1234')
+        with patch('app.fetcher.requests.head', return_value=response):
+            self.assertEqual(self.fetcher._parse_history_data(data)[0]['video_type'], 'video')
+
+    def test_shorts_verification_is_bounded(self):
+        from types import SimpleNamespace
+        data = page([{'videoRenderer': {'videoId': f'{i:011d}',
+                     'lengthText': {'simpleText': '0:50'}}} for i in range(20)])
+        response = SimpleNamespace(status_code=429, url='https://www.youtube.com/')
+        with patch('app.fetcher.requests.head', return_value=response) as head:
+            self.fetcher._parse_history_data(data)
+            self.fetcher._parse_history_data(data)
+        self.assertEqual(head.call_count, 1)
+
+    def test_explicit_short_endpoint_needs_no_verification_request(self):
+        data = page([{'videoRenderer': {'videoId': 'short123456',
+                     'navigationEndpoint': {'reelWatchEndpoint': {'videoId': 'short123456'}}}}])
+        with patch('app.fetcher.requests.head') as head:
+            self.assertEqual(self.fetcher._parse_history_data(data)[0]['video_type'], 'short')
+        head.assert_not_called()
+
+    def test_later_short_verification_repairs_archive_without_new_observation(self):
+        main.on_video_change({'video_id': 'short123456', 'duration': '0:50'})
+        before = next(iter(history_store.load_history().values()))[0]
+        main.record_history_snapshot([{'video_id': 'short123456', 'video_type': 'short',
+                                      'url': 'https://www.youtube.com/shorts/short123456'}])
+        entries = next(iter(history_store.load_history().values()))
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]['timestamp'], before['timestamp'])
+        self.assertEqual(entries[0]['video_type'], 'short')
+
+    def test_latest_type_correction_is_republished_to_mqtt(self):
+        from types import SimpleNamespace
+        from contextlib import ExitStack
+        fetcher = SimpleNamespace(history_data=[], history_by_channel={}, cookies_valid=True)
+        rounds = iter(['video', 'short'])
+        def fetch_history():
+            fetcher.history_data = [{'video_id': 'short123456', 'video_type': next(rounds)}]
+            fetcher.history_by_channel = {'default': fetcher.history_data}
+        fetcher.fetch_history = fetch_history
+        publisher = MqttPublisher('unused')
+        publisher._connected = True
+        messages = {}
+        publisher._publish = lambda topic, payload, **kwargs: messages.update({topic: payload})
+        sleeps = []
+        def sleep(seconds):
+            if seconds == 60:
+                sleeps.append(seconds)
+                if len(sleeps) == 2:
+                    raise KeyboardInterrupt()
+        with ExitStack() as stack:
+            for name, value in {'fetcher': fetcher, 'mqtt_pub': publisher,
+                                '_last_seen_by_channel': {}, '_recent_added': {},
+                                '_last_subscriptions_fetch': 10**20}.items():
+                stack.enter_context(patch.object(main, name, value))
+            stack.enter_context(patch.object(main, 'load_options', return_value={'scan_interval': 60, 'fetch_recommended': False}))
+            stack.enter_context(patch.object(main, 'maintain_cookies'))
+            stack.enter_context(patch.object(main.time, 'sleep', side_effect=sleep))
+            with self.assertRaises(KeyboardInterrupt):
+                main.fetch_loop()
+        self.assertEqual(messages['youtube_monitoring_dev/recent_watched/attributes']['video_type'], 'short')
+
     def test_shorts_share_global_limit(self):
         videos = self.fetcher._parse_history_data(page([
             {'reelShelfRenderer': {'items': [short(f'{i:011d}') for i in range(40)]}}]))

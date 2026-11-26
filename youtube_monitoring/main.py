@@ -83,7 +83,7 @@ mqtt_pub: MqttPublisher | None = None
 _history_lock = threading.Lock()
 _subs_lock = threading.Lock()
 _last_seen_video_id: str | None = None
-_last_seen_by_channel: dict[str, str] = {}  # 채널별 마지막으로 본 최신 video_id
+_last_seen_by_channel: dict[str, tuple[str, str]] = {}  # 채널별 마지막으로 본 최신 video_id
 _recent_added: dict[str, float] = {}  # video_id -> timestamp (5분 내 중복 방지)
 _last_recommended_fetch: float = 0  # 추천 영상 마지막 fetch 시각
 _last_manual_refresh_recommended: float = 0  # 수동 새로고침 마지막 시각 (10분 쿨다운)
@@ -180,6 +180,16 @@ def on_video_change(video_data: dict) -> bool:
         if not vid or vid == "N/A":
             return False
         if has_video_id(history, vid):
+            if _is_shorts(video_data):
+                corrected = False
+                for entries in history.values():
+                    for entry in entries:
+                        if entry.get("video_id") == vid and not _is_shorts(entry):
+                            entry["video_type"] = "short"
+                            entry["url"] = f"https://www.youtube.com/shorts/{vid}"
+                            corrected = True
+                if corrected:
+                    save_history(history)
             return False
 
         add_entry(
@@ -205,14 +215,14 @@ def record_history_snapshot(videos: list[dict]) -> int:
     remain deduplicated for compatibility with the distinct-item archive.
     """
     with _history_lock:
-        known_ids = {entry.get("video_id") for entries in load_history().values()
-                     for entry in entries}
+        known_types = {entry.get("video_id"): _is_shorts(entry)
+                       for entries in load_history().values() for entry in entries}
     added = 0
     for video in reversed(videos):
         video_id = video.get("video_id")
-        if video_id not in known_ids:
+        if video_id not in known_types or (_is_shorts(video) and not known_types[video_id]):
             added += int(on_video_change(video))
-            known_ids.add(video_id)
+            known_types[video_id] = _is_shorts(video)
     return added
 
 
@@ -392,10 +402,11 @@ def fetch_loop() -> None:
                 record_history_snapshot(ch_videos)
                 most_recent = ch_videos[0]
                 video_id = most_recent.get("video_id")
-                if not video_id or video_id == "N/A" or video_id == _last_seen_by_channel.get(ch_key):
+                signature = (video_id, "short" if _is_shorts(most_recent) else "video")
+                if not video_id or video_id == "N/A" or signature == _last_seen_by_channel.get(ch_key):
                     continue
                 _recent_added[video_id] = now
-                _last_seen_by_channel[ch_key] = video_id
+                _last_seen_by_channel[ch_key] = signature
                 _last_seen_video_id = video_id
                 # 최근 시청 영상 변경 → MQTT 발행 (방금 바뀐 영상을 맨 앞에)
                 if mqtt_pub and mqtt_pub.is_connected():
