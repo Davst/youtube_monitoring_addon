@@ -25,3 +25,8 @@ Thumbs.db
 
 # Cursor
 .cursor/
+
+# Session credentials (including backups from older versions)
+*cookies*.txt
+*cookies*.txt.bak
+.yt_cookies_*

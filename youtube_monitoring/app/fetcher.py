@@ -6,7 +6,7 @@ YouTube /feed/history 페이지에서 ytInitialData JSON 파싱.
 - videoRenderer: 레거시 형식
 - reelShelfRenderer + shortsLockupViewModel: Shorts
 
-우선순위: lockup > videoRenderer > Shorts (일반 영상 우선)
+History preserves response order across regular videos and Shorts (first page only).
 """
 from __future__ import annotations
 
@@ -301,15 +301,16 @@ class YouTubeHistoryFetcher:
     def _extract_shorts_info(self, shorts: dict) -> dict[str, Any] | None:
         """shortsLockupViewModel 파싱 (YouTube Shorts)."""
         try:
-            entity_id = shorts.get("entityId", "")
-            video_id = entity_id.split("-")[-1] if entity_id else None
-            if not video_id or video_id == "item":
-                video_id = (
-                    shorts.get("onTap", {})
-                    .get("innertubeCommand", {})
-                    .get("reelWatchEndpoint", {})
-                    .get("videoId")
-                )
+            video_id = (
+                shorts.get("onTap", {})
+                .get("innertubeCommand", {})
+                .get("reelWatchEndpoint", {})
+                .get("videoId")
+            )
+            if not video_id:
+                entity_id = shorts.get("entityId", "")
+                match = re.search(r"([A-Za-z0-9_-]{11})$", entity_id)
+                video_id = match.group(1) if match else None
             if not video_id:
                 return None
             title = (
@@ -322,6 +323,7 @@ class YouTubeHistoryFetcher:
                 "title": title or "YouTube Shorts",
                 "video_id": video_id,
                 "duration": "Shorts",
+                "video_type": "short",
                 "thumbnail": self._get_best_thumbnail(video_id),
                 "url": f"https://www.youtube.com/shorts/{video_id}",
             }
@@ -495,49 +497,30 @@ class YouTubeHistoryFetcher:
         if not all_paths:
             return []
 
-        # 우선순위별 수집: lockup(일반) > videoRenderer(일반) > Shorts
-        lockups: list[dict[str, Any]] = []
-        video_renderers: list[dict[str, Any]] = []
-        shorts_list: list[dict[str, Any]] = []
-
+        # Preserve the page's order across renderer types; shelf order is only
+        # presentation order, not evidence of exact watch times.
+        videos: list[dict[str, Any]] = []
+        seen: set[str] = set()
         for path in all_paths:
-            # messageRenderer = 빈 히스토리 또는 일시정지 메시지 → 스킵
             for item in path:
-                if isinstance(item, dict) and "messageRenderer" in item:
-                    break
-            else:
-                for item in path:
-                    # 필요한 개수만 추출 (항목마다 썸네일 확인 요청이 나가므로 긴 페이지 전체를 처리하지 않음)
-                    if len(lockups) + len(video_renderers) >= MAX_HISTORY_ITEMS:
-                        break
-                    if not isinstance(item, dict):
+                if not isinstance(item, dict):
+                    continue
+                content = item.get("richItemRenderer", {}).get("content", item)
+                candidates = content.get("reelShelfRenderer", {}).get("items", [content])
+                for candidate in candidates:
+                    if len(videos) >= MAX_HISTORY_ITEMS:
+                        return videos
+                    if not isinstance(candidate, dict):
                         continue
-                    if "lockupViewModel" in item:
-                        lockup = item["lockupViewModel"]
-                        if lockup.get("contentType") == "LOCKUP_CONTENT_TYPE_VIDEO":
-                            v = self._extract_lockup_info(lockup)
-                            if v:
-                                lockups.append(v)
-                    elif "videoRenderer" in item:
-                        v = self._extract_video_renderer_info(item["videoRenderer"])
-                        if v:
-                            video_renderers.append(v)
-                    elif "richItemRenderer" in item:
-                        c = item["richItemRenderer"].get("content", {})
-                        if "videoRenderer" in c:
-                            v = self._extract_video_renderer_info(c["videoRenderer"])
-                            if v:
-                                video_renderers.append(v)
-                    elif "reelShelfRenderer" in item:
-                        for ri in item["reelShelfRenderer"].get("items", []):
-                            if "shortsLockupViewModel" in ri:
-                                v = self._extract_shorts_info(ri["shortsLockupViewModel"])
-                                if v:
-                                    shorts_list.append(v)
-                                break
-
-        history_list = lockups + video_renderers + shorts_list
-        return history_list
+                    if "shortsLockupViewModel" in candidate:
+                        video = self._extract_shorts_info(candidate["shortsLockupViewModel"])
+                    else:
+                        video = self._extract_video_from_grid_item(candidate)
+                    if video and video.get("video_id") not in seen:
+                        video.setdefault("video_type", "video")
+                        seen.add(video.get("video_id"))
+                        videos.append(video)
+        return videos
 
     def _parse_channels_data(self, data: dict) -> list[dict[str, Any]]:
         """ytInitialData / InnerTube browse(FEchannels) 응답에서 구독 채널 목록 추출 (정렬 포함)."""
@@ -649,7 +632,7 @@ class YouTubeHistoryFetcher:
     def fetch_history(self) -> list[dict[str, Any]]:
         """
         /feed/history 페이지 조회 → ytInitialData 파싱 → 영상 목록 반환.
-        우선순위: lockup > videoRenderer > Shorts.
+        Preserves response order, including Shorts; first page only.
         """
         try:
             response = self._get("https://www.youtube.com/feed/history")

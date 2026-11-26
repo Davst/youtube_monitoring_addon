@@ -18,7 +18,6 @@ YouTube 쿠키 자동 유지 관리.
 """
 from __future__ import annotations
 
-import copy
 import logging
 import os
 import tempfile
@@ -130,8 +129,6 @@ class CookieManager:
         self._loaded_mtime: int | None = None
         self._saved_snapshot: frozenset | None = None
         self._load_error: str | None = None
-        self._auth_backup: dict[tuple[str, str, str], Any] = {}  # 마지막으로 저장/로드한 로그인 쿠키
-        self._lost_warned: frozenset[str] = frozenset()
         self.last_rotate_at: float = 0.0
         self.last_rotate_ok: bool | None = None
         self.last_rotate_message: str = ""
@@ -161,6 +158,10 @@ class CookieManager:
             jar.load(ignore_discard=True, ignore_expires=True)
         except Exception as err:  # LoadError, OSError, 깨진 줄 등
             return self._fail(mtime, f"Failed to load cookies: {err}")
+        for cookie in list(jar):
+            if not _domain_ok(cookie.domain):
+                jar.clear(cookie.domain, cookie.path, cookie.name)
+        jar.clear_expired_cookies()
         if len(jar) == 0:
             return self._fail(mtime, "Cookies file is empty")
         self._load_error = None
@@ -171,7 +172,6 @@ class CookieManager:
         self._session, self._jar = session, jar
         self._loaded_mtime = mtime
         self._saved_snapshot = _snapshot(jar)
-        self._backup_auth(jar)
         _LOGGER.info("[쿠키] 파일 로드: %d개 쿠키", len(jar))
         return True
 
@@ -190,34 +190,13 @@ class CookieManager:
         with self.lock:
             if self._jar is None:
                 return False
-            self._restore_lost_auth()
+            self._jar.clear_expired_cookies()
             snap = _snapshot(self._jar)
             if snap == self._saved_snapshot:
                 return False
             self._write_jar(self._jar)
             self._saved_snapshot = snap
-            self._backup_auth(self._jar)
             return True
-
-    def _backup_auth(self, jar: MozillaCookieJar) -> None:
-        self._auth_backup = {
-            (c.domain, c.path, c.name): copy.copy(c) for c in jar if c.name in AUTH_COOKIE_NAMES
-        }
-
-    def _restore_lost_auth(self) -> None:
-        """
-        YouTube가 응답으로 로그인 쿠키 삭제를 보내면(로그아웃 응답 등) 그 쿠키만 되돌린다.
-        일시적 오류일 수 있고 복구(회전)에도 필요하므로 지우지 않는다. 다른 갱신 쿠키는 그대로 저장.
-        """
-        assert self._jar is not None
-        present = {(c.domain, c.path, c.name) for c in self._jar}
-        lost = [key for key in self._auth_backup if key not in present]
-        for key in lost:
-            self._jar.set_cookie(copy.copy(self._auth_backup[key]))
-        names = frozenset(name for (_d, _p, name) in lost)
-        if names and names != self._lost_warned:  # 같은 내용은 한 번만 기록
-            _LOGGER.warning("[쿠키] 서버가 로그인 쿠키 삭제를 요청(%s) - 보존함", ", ".join(sorted(names)))
-        self._lost_warned = names
 
     def _write_jar(self, jar: MozillaCookieJar) -> None:
         directory = os.path.dirname(os.path.abspath(self.path)) or "."
@@ -242,15 +221,9 @@ class CookieManager:
         _LOGGER.debug("[쿠키] 갱신된 쿠키 저장 (%d개)", len(jar))
 
     def replace_from_text(self, text: str) -> int:
-        """새 cookies.txt 내용으로 교체 (기존 파일은 .bak으로 보관). 쿠키 개수 반환."""
+        """Replace cookies atomically without retaining a credential backup; return count."""
         jar = parse_cookie_text(text)
         with self.lock:
-            if os.path.exists(self.path):
-                try:
-                    with open(self.path, "rb") as src, open(self.path + ".bak", "wb") as dst:
-                        dst.write(src.read())
-                except OSError as err:
-                    _LOGGER.warning("[쿠키] 백업 실패: %s", err)
             self._write_jar(jar)
             self._session = None  # 다음 session() 호출 때 새로 로드
             self._loaded_mtime = None

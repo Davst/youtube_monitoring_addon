@@ -108,25 +108,21 @@ class CookieManagerTest(CookieTestBase):
         # 우리가 저장한 파일 때문에 다시 로드하지 않아야 함 (세션 유지)
         self.assertIs(cm.session(), s)
 
-    def test_auth_cookie_deletion_is_not_persisted(self) -> None:
+    def test_auth_cookie_deletion_is_persisted(self) -> None:
         self.write_cookies()
         cm = CookieManager(self.path)
-        s = cm.session()
-        s.cookies.clear(".youtube.com", "/", "SID")  # 로그아웃 응답의 Set-Cookie 삭제처럼
-        s.cookies.clear(".youtube.com", "/", "__Secure-1PSID")
-        self.assertFalse(cm.save_if_changed())  # 삭제만 있었으면 저장할 변화 없음
+        session = cm.session()
+        session.cookies.clear(".youtube.com", "/", "SID")
+        session.cookies.clear(".youtube.com", "/", "__Secure-1PSID")
+        self.assertTrue(cm.save_if_changed())
         names = {c.name for c in CookieManager(self.path).session().cookies}
-        self.assertTrue({"SID", "__Secure-1PSID"} <= names)
-        self.assertTrue(cm.has_auth_cookies())  # 메모리도 원래 쿠키로 복원 → 회전 복구 가능
-        self.assertIs(cm.session(), s)  # 파일 재로드 없이 같은 세션 유지
-
-        # 삭제와 함께 온 다른 갱신 쿠키는 저장돼야 함
-        s.cookies.clear(".youtube.com", "/", "SID")
-        s.cookies.set_cookie(_cookie("__Secure-1PSIDTS", "sidts-after-delete"))
+        self.assertFalse({"SID", "__Secure-1PSID"} & names)
+        self.assertFalse(cm.has_auth_cookies())
+        session.cookies.set_cookie(_cookie("__Secure-1PSIDTS", "sidts-after-delete"))
         self.assertTrue(cm.save_if_changed())
         values = {c.name: c.value for c in CookieManager(self.path).session().cookies}
         self.assertEqual(values["__Secure-1PSIDTS"], "sidts-after-delete")
-        self.assertEqual(values["SID"], "sid-value")
+        self.assertNotIn("SID", values)
 
     def test_page_headers_match_original(self) -> None:
         self.write_cookies()
@@ -147,13 +143,13 @@ class CookieManagerTest(CookieTestBase):
         self.assertIsNot(s1, s2)
         self.assertEqual({c.name: c.value for c in s2.cookies}["__Secure-1PSIDTS"], "sidts-from-user")
 
-    def test_replace_from_text_backs_up_old_file(self) -> None:
+    def test_replace_from_text_does_not_back_up_credentials(self) -> None:
         self.write_cookies()
         cm = CookieManager(self.path)
         cm.session()
         n = cm.replace_from_text(COOKIES_TXT.replace("sidts-old", "sidts-uploaded"))
         self.assertEqual(n, 4)  # example.com 제외
-        self.assertTrue(os.path.exists(self.path + ".bak"))
+        self.assertFalse(os.path.exists(self.path + ".bak"))
         self.assertEqual({c.name: c.value for c in cm.session().cookies}["__Secure-1PSIDTS"], "sidts-uploaded")
 
     def test_rotate_success_saves_new_sidts(self) -> None:
@@ -236,6 +232,14 @@ class MaintainCookiesTest(CookieTestBase):
         super().setUp()
         import main
         self.main = main
+        from app import history_store
+        history_patch = mock.patch.object(history_store, "_get_history_path",
+                                         return_value=os.path.join(self.tmp.name, "history.json"))
+        history_patch.start()
+        self.addCleanup(history_patch.stop)
+        recent_patch = mock.patch.object(main, "_recent_added", {})
+        recent_patch.start()
+        self.addCleanup(recent_patch.stop)
         main._cookie_invalid_since = None
         main._last_cookie_recovery = 0
         main._cookie_notified = False
@@ -449,6 +453,14 @@ class CookieUploadApiTest(CookieTestBase):
         import main
         from http.server import HTTPServer
         self.main = main
+        from app import history_store
+        history_patch = mock.patch.object(history_store, "_get_history_path",
+                                         return_value=os.path.join(self.tmp.name, "history.json"))
+        history_patch.start()
+        self.addCleanup(history_patch.stop)
+        recent_patch = mock.patch.object(main, "_recent_added", {})
+        recent_patch.start()
+        self.addCleanup(recent_patch.stop)
         main._cookie_invalid_since = None
         main._cookie_notified = False
         self.fetcher = YouTubeHistoryFetcher(self.path)  # 파일 없음 상태에서 시작
@@ -540,10 +552,19 @@ class CookieUploadApiTest(CookieTestBase):
         except (ConnectionError, urllib.error.URLError):
             pass
 
-    def test_ingest_shorts_skipped(self) -> None:
+    def test_ingest_shorts_recorded(self) -> None:
         body = json.dumps({"video_id": "shortsID001", "url": "https://www.youtube.com/shorts/shortsID001"}).encode()
         status, data = self._post_ingest(body)
-        self.assertEqual((status, data.get("reason")), (200, "shorts"))
+        self.assertEqual((status, data.get("status")), (200, "ok"))
+
+    def test_cross_origin_ingest_is_denied(self) -> None:
+        status, data = self._post_ingest(b'{}', {'Origin': 'https://evil.example'})
+        self.assertEqual(status, 403)
+        self.assertEqual(data["error"], "forbidden")
+
+    def test_history_has_no_wildcard_cors(self) -> None:
+        with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/api/history", timeout=10) as response:
+            self.assertIsNone(response.headers.get("Access-Control-Allow-Origin"))
 
     def test_ui_escapes_attributes(self) -> None:
         with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/", timeout=10) as r:

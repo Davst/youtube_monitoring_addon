@@ -1,3 +1,5 @@
+> Development branch: install **YouTube Monitoring Dev** through Home Assistant Ingress. Direct LAN/API and cross-origin userscript access are disabled. See [test instructions](youtube_monitoring/docs/development-testing.md).
+
 # YouTube Monitoring Add-on
 
 **English** | [한국어](README.ko.md)
@@ -25,16 +27,16 @@ Taken with made-up demo data (no real watch history).
 - **Cookie-based Polling**: Directly fetches the YouTube watch history page (default interval: 60 seconds)
 - **Automatic Cookie Refresh**: Saves updated cookies from responses and rotates Google cookies every 10 minutes to keep the session alive; sends a Home Assistant notification if manual re-upload is needed
 - **Multi-Channel Support**: Collects watch history and subscriptions across the main channel and all Brand Accounts under the same Google account (`scan_all_channels`, enabled by default)
-- **Persistent History**: Saves watch history to `/data/yt_history.json` (with 5-minute deduplication). **YouTube Shorts are excluded**
+- **Persistent History**: Saves watch history to `/data/yt_history.json` (one entry per distinct observed video ID). **Includes YouTube Shorts**
 - **Daily History**: Grouped by date with collapsible sections
-- **Monthly Calendar View**: Select a month to see daily watch counts; click any date to view that day's videos (Shorts excluded)
+- **Monthly Calendar View**: Select a month to see daily watch counts; click any date to view that day's videos (including Shorts)
 - **Subscriptions**: Displays channel thumbnails, subscriber counts, and `@handles` with **Alphabetical / By Subscribers** sorting
 - **Monthly Subscription Changes**: Tracks newly subscribed and unsubscribed channels by month
 - **Recommended Videos**: Shows up to 3 recommended videos from the YouTube home feed (configurable interval + manual refresh with 10-minute cooldown)
 - **Bilingual Web UI (EN / KO)**: Built-in English/Korean toggle button with automatic browser language detection, plus an in-app **Update Cookies** button
 - **Home Assistant Ingress**: Accessible directly from the Home Assistant sidebar as **YouTube Watch History**
 - **MQTT Discovery Sensors** (Optional): Automatically registers recent watched video, recommended videos, and cookie status sensors in Home Assistant when MQTT is configured
-- **Real-time Push** (Optional): Instantly record videos via `POST /api/ingest` using a browser extension or userscript (Shorts URLs are skipped)
+- **Real-time Push** (Optional): Instantly record videos via `POST /api/ingest` using a browser extension or userscript (including Shorts URLs)
 
 ### Why Cookies?
 
@@ -119,7 +121,7 @@ scp youtube_cookies.txt root@homeassistant:/config/
 | `cookies_path` | Path to the Netscape cookies file | `/config/youtube_cookies.txt` |
 | `scan_interval` | History/subscription polling interval in seconds (30 to 300) | `60` |
 | `port` | HTTP API server port | `8765` |
-| `duplicate_minutes` | Ignore duplicate detections of the same video within N minutes (1 to 60) | `5` |
+| `duplicate_minutes` | Browser-ingest debounce window (1 to 60 min); the archive also deduplicates IDs for its entire lifetime | `5` |
 | `fetch_recommended` | Fetch recommended videos from YouTube Home | `true` |
 | `scan_interval_recommended` | Recommended videos refresh interval in seconds (60 to 3600) | `1800` |
 | `timezone` | Timezone for logs and daily history grouping (e.g., `America/New_York`, `Europe/London`, `Asia/Seoul`) | `Asia/Seoul` |
@@ -140,7 +142,7 @@ This add-on supports Home Assistant Ingress and appears in the sidebar as **YouT
 Returns daily watch history, monthly stats, subscriptions, monthly subscription changes, recommended videos, and cookie maintenance status.
 
 ### `GET /api/stats`
-Returns monthly statistics only (Shorts excluded).
+Returns monthly statistics only (including Shorts).
 
 ### `GET /api/health`
 Health check endpoint including `cookies_valid`, `cookie_problem`, and `cookie_maintenance`.
@@ -162,8 +164,8 @@ Content-Type: application/json
 ```
 
 - `video_id` is required; all other fields are optional
-- Duplicate `video_id` entries within `duplicate_minutes` are skipped
-- Shorts URLs (`/shorts/`) are skipped
+- Duplicate `video_id` entries already in the archive are skipped; `duplicate_minutes` also debounces browser ingestion
+- Shorts URLs (`/shorts/`), `duration: "Shorts"`, or `video_type: "short"` are accepted and stored with `video_type: "short"`
 
 **Userscript setup**: Install `youtube_monitoring/docs/userscript.example.js` in Tampermonkey and update `INGEST_URL` to your add-on's Ingress URL.
 
@@ -248,8 +250,8 @@ Increase `scan_interval` to `120` seconds or higher. If you also browse YouTube 
 
 ## FAQ
 
-**Q: Why aren't YouTube Shorts recorded?**  
-A: Since v1.4.8, Shorts are intentionally excluded from both history storage and monthly statistics.
+**Q: Are YouTube Shorts recorded?**
+A: This development branch includes Shorts in the archive, daily/monthly UI, API statistics and MQTT. Counts represent distinct observed IDs, not play counts or watch time. See [Shorts support and limitations](youtube_monitoring/docs/shorts-support.md).
 
 **Q: How long do cookies last?**  
 A: Since v1.5.4, the add-on automatically rotates and saves cookies every 10 minutes, keeping sessions alive for months as long as the Incognito window was closed right after export.
@@ -307,3 +309,7 @@ If you find this add-on useful, feel free to buy me a coffee!
 ---
 
 **Enjoy your Smart Home!**
+
+## Development: Shorts support
+
+This branch adds Shorts throughout the history pipeline. Read [scope, polling limits, cookie review and live verification](youtube_monitoring/docs/shorts-support.md) before live testing.

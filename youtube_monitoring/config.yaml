@@ -1,13 +1,13 @@
-name: "YouTube Monitoring"
-version: "1.5.9"
-slug: "youtube_monitoring"
+name: "YouTube Monitoring Dev"
+version: "1.6.0-dev.1"
+slug: "youtube_monitoring_dev"
 description: "YouTube cookie-based watch history, subscriptions & recommended videos + MQTT Discovery sensors (auto cookie refresh)."
-url: "http://homeassistant.local:8765"
+url: "https://github.com/Davst/youtube_monitoring_addon"
 icon: "icon.png"
 logo: "logo.png"
 panel_icon: "mdi:youtube-subscription"
 panel_title: "YouTube Watch History"
-panel_admin: false
+panel_admin: true
 arch:
   - armhf
   - armv7
@@ -17,26 +17,24 @@ arch:
 startup: application
 boot: auto
 ports:
-  8765/tcp: 8765
+  8765/tcp: null
 ports_description:
   8765/tcp: "YouTube History API Web Server"
 homeassistant_api: true
 ingress: true
 ingress_port: 8765
-webui: "http://[HOST]:[PORT:8765]"
 map:
-  - config:rw
-  - share:rw
+  - config:ro
 services:
   - "mqtt:want"
 options:
-  cookies_path: "/config/youtube_cookies.txt"
+  cookies_path: "/data/youtube_cookies.txt"
   scan_interval: 60
   port: 8765
   duplicate_minutes: 5
   fetch_recommended: true
   scan_interval_recommended: 1800
-  timezone: "Asia/Seoul"
+  timezone: "Europe/Stockholm"
   notify_cookie_invalid: true
   scan_all_channels: true
 schema:

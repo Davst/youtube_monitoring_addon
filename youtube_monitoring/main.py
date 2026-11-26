@@ -27,6 +27,7 @@ from app.history_store import (
     get_monthly_stats,
     get_monthly_breakdown,
     has_video_id,
+    _is_shorts,
 )
 from app.subscription_store import (
     update_subscription_changes,
@@ -155,26 +156,6 @@ def _clean_text(value: Any, limit: int = 300) -> str:
     return text or "N/A"
 
 
-def _is_shorts(video_data: dict) -> bool:
-    """Shorts 영상 여부: 기록/통계에서 제외."""
-    if video_data.get("duration") == "Shorts":
-        return True
-    if video_data.get("channel") == "YouTube Shorts":
-        return True
-    url = video_data.get("url") or ""
-    if "/shorts/" in url:
-        return True
-    return False
-
-
-def _filter_shorts_from_history(history: dict) -> dict:
-    """Shorts 항목을 제거한 히스토리 복사본 (통계/표시용)."""
-    filtered: dict[str, list] = {}
-    for date_str, entries in history.items():
-        filtered[date_str] = [e for e in entries if not _is_shorts(e)]
-    return {k: v for k, v in filtered.items() if v}
-
-
 def _now_in_user_tz() -> datetime:
     """설정된 timezone 기준 현재 시각 (시청 기록 날짜용)."""
     opts = load_options()
@@ -189,11 +170,9 @@ def _now_in_user_tz() -> datetime:
 def on_video_change(video_data: dict) -> bool:
     """
     video_id 변경 시 yt_history.json에 추가.
-    Shorts는 기록하지 않음.
-    Returns: True=저장됨, False=중복/Shorts/유효하지 않음.
+    Records distinct observed IDs, including Shorts.
+    Returns: True=저장됨, False=중복/유효하지 않음.
     """
-    if _is_shorts(video_data):
-        return False
     with _history_lock:
         history = load_history()
         vid = video_data.get("video_id")
@@ -212,10 +191,29 @@ def on_video_change(video_data: dict) -> bool:
             url=video_data.get("url", ""),
             duration=video_data.get("duration", "N/A"),
             timestamp=_now_in_user_tz(),
+            video_type="short" if _is_shorts(video_data) else "video",
         )
         save_history(history)
         _LOGGER.info("[기록] 저장: %s", video_data.get("title", video_data.get("video_id")))
         return True
+
+
+def record_history_snapshot(videos: list[dict]) -> int:
+    """Archive newly visible IDs, oldest first so the stored list retains page order.
+
+    Timestamps are observation times, not YouTube watch timestamps. Repeated IDs
+    remain deduplicated for compatibility with the distinct-item archive.
+    """
+    with _history_lock:
+        known_ids = {entry.get("video_id") for entries in load_history().values()
+                     for entry in entries}
+    added = 0
+    for video in reversed(videos):
+        video_id = video.get("video_id")
+        if video_id not in known_ids:
+            added += int(on_video_change(video))
+            known_ids.add(video_id)
+    return added
 
 
 def _ha_service(service: str, data: dict) -> bool:
@@ -391,19 +389,21 @@ def fetch_loop() -> None:
             for ch_key, ch_videos in by_channel.items():
                 if not ch_videos:
                     continue
+                record_history_snapshot(ch_videos)
                 most_recent = ch_videos[0]
                 video_id = most_recent.get("video_id")
                 if not video_id or video_id == "N/A" or video_id == _last_seen_by_channel.get(ch_key):
                     continue
-                if now - _recent_added.get(video_id, 0) >= duplicate_sec:
-                    if on_video_change(most_recent):
-                        _recent_added[video_id] = now
+                _recent_added[video_id] = now
                 _last_seen_by_channel[ch_key] = video_id
                 _last_seen_video_id = video_id
                 # 최근 시청 영상 변경 → MQTT 발행 (방금 바뀐 영상을 맨 앞에)
                 if mqtt_pub and mqtt_pub.is_connected():
                     rest = [v for v in videos if v.get("video_id") != video_id]
                     mqtt_pub.publish_recent_watched([most_recent] + rest)
+            if mqtt_pub and mqtt_pub.is_connected():
+                with _history_lock:
+                    mqtt_pub.publish_history_counts(load_history())
             _recent_added = {k: v for k, v in _recent_added.items() if now - v < duplicate_sec * 2}
 
             if not fetcher.cookies_valid:
@@ -428,7 +428,6 @@ class YouTubeMonitoringHandler(BaseHTTPRequestHandler):
         """JSON 응답 전송 (CORS 포함)."""
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(json.dumps(data, ensure_ascii=False).encode("utf-8"))
 
@@ -440,15 +439,18 @@ class YouTubeMonitoringHandler(BaseHTTPRequestHandler):
         self.wfile.write(html.encode("utf-8"))
 
     def do_OPTIONS(self) -> None:
-        """CORS preflight (POST /api/ingest용)."""
-        self.send_response(200)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        if not self._is_trusted_request():
+            self.send_json({"error": "forbidden"}, status=403)
+            return
+        self.send_response(204)
+        self.send_header("Allow", "GET, POST, OPTIONS")
         self.end_headers()
 
     def do_POST(self) -> None:
         """POST /api/ingest, POST /api/refresh/recommended."""
+        if not self._is_trusted_request():
+            self.send_json({"error": "forbidden"}, status=403)
+            return
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
         if path == "/api/ingest":
@@ -464,10 +466,31 @@ class YouTubeMonitoringHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def _is_trusted_request(self) -> bool:
-        """쿠키 교체는 HA Ingress(로그인된 HA 사용자) 경유만 허용. HA 밖(로컬 실행)은 허용."""
-        if not os.environ.get("SUPERVISOR_TOKEN"):
-            return True
-        return self.client_address[0] == INGRESS_PROXY_IP
+        """HA requires the actual Ingress peer; standalone access is loopback only."""
+        peer = self.client_address[0]
+        in_ha = bool(os.environ.get("SUPERVISOR_TOKEN"))
+        if in_ha:
+            if peer != INGRESS_PROXY_IP:
+                return False
+        elif peer not in ("127.0.0.1", "::1"):
+            return False
+        host = self.headers.get("Host", "")
+        try:
+            hostname = urlparse("//" + host).hostname
+        except ValueError:
+            return False
+        if not in_ha and hostname not in ("localhost", "127.0.0.1", "::1"):
+            return False
+        if self.headers.get("Sec-Fetch-Site") in ("cross-site", "same-site"):
+            return False
+        origin = self.headers.get("Origin")
+        if origin:
+            # Forwarded host is trusted only from the actual HA Ingress peer.
+            expected_host = self.headers.get("X-Forwarded-Host", host) if in_ha else host
+            parsed_origin = urlparse(origin)
+            if parsed_origin.scheme not in ("http", "https") or parsed_origin.netloc != expected_host:
+                return False
+        return True
 
     def _handle_cookie_upload(self) -> None:
         """웹 UI에서 붙여넣은/선택한 cookies.txt로 쿠키 교체 → 즉시 검증."""
@@ -551,7 +574,7 @@ class YouTubeMonitoringHandler(BaseHTTPRequestHandler):
             self.send_json({"error": "Invalid JSON"}, status=400)
             return
 
-        # 인증 없는 엔드포인트이므로 값은 신뢰하지 않는다: video_id 형식 검증,
+        # Peer/origin authorization does not make input trustworthy: validate video_id,
         # url/썸네일은 video_id로 직접 만들고, 글자 값은 길이 제한 (저장형 XSS 방지).
         video_id = str(data.get("video_id") or data.get("videoId") or "").strip()
         if not _VIDEO_ID_RE.fullmatch(video_id):
@@ -565,18 +588,16 @@ class YouTubeMonitoringHandler(BaseHTTPRequestHandler):
             self.send_json({"status": "skipped", "reason": "duplicate"})
             return
 
-        client_url = str(data.get("url") or "")
-        if "/shorts/" in client_url or data.get("duration") == "Shorts":
-            self.send_json({"status": "skipped", "reason": "shorts"})
-            return
+        is_short = _is_shorts(data)
         duration = str(data.get("duration") or "")
         video_data = {
             "video_id": video_id,
             "title": _clean_text(data.get("title")),
             "channel": _clean_text(data.get("channel")),
             "thumbnail": f"https://img.youtube.com/vi/{video_id}/0.jpg",
-            "url": f"https://www.youtube.com/watch?v={video_id}",
-            "duration": duration if _DURATION_RE.fullmatch(duration) else "N/A",
+            "url": f"https://www.youtube.com/shorts/{video_id}" if is_short else f"https://www.youtube.com/watch?v={video_id}",
+            "video_type": "short" if is_short else "video",
+            "duration": "Shorts" if is_short else (duration if _DURATION_RE.fullmatch(duration) else "N/A"),
         }
         if not on_video_change(video_data):
             self.send_json({"status": "skipped", "reason": "duplicate"})
@@ -613,6 +634,9 @@ class YouTubeMonitoringHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         """GET 라우팅: /, /api/history, /api/stats, /api/health."""
         global fetcher
+        if not self._is_trusted_request():
+            self.send_json({"error": "forbidden"}, status=403)
+            return
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
         query = parse_qs(parsed.query)
@@ -638,14 +662,12 @@ class YouTubeMonitoringHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def _serve_history(self, query: dict) -> None:
-        """누적 기록(yt_history.json) + 실시간 조회(fetcher) 병합 응답. Shorts 제외."""
+        """누적 기록(yt_history.json) + 실시간 조회(fetcher) 병합 응답. Includes Shorts."""
         global fetcher, _last_manual_refresh_recommended
         with _history_lock:
             accumulated = load_history()
 
-        accumulated = _filter_shorts_from_history(accumulated)
         live_videos = fetcher.history_data if (fetcher and fetcher.history_data) else []
-        live_videos = [v for v in live_videos if not _is_shorts(v)]
         by_date: dict[str, list] = dict(accumulated)
         monthly = get_monthly_stats(accumulated)
         monthly_breakdown = get_monthly_breakdown(accumulated)
@@ -675,10 +697,9 @@ class YouTubeMonitoringHandler(BaseHTTPRequestHandler):
         })
 
     def _serve_stats(self) -> None:
-        """월별 통계 반환 (Shorts 제외)."""
+        """Monthly distinct observed-item counts, including Shorts."""
         with _history_lock:
             history = load_history()
-        history = _filter_shorts_from_history(history)
         monthly = get_monthly_stats(history)
         monthly_breakdown = get_monthly_breakdown(history)
         self.send_json({
@@ -961,10 +982,10 @@ def _get_ui_html() -> str:
                 refresh: 'Refresh',
                 recommendedTitle: 'Recommended',
                 cookieInvalidNotice: 'Cookies are invalid. Click [Update Cookies] at the top right to upload new cookies.',
-                dailySummary: (days, videos) => days + (days === 1 ? ' day (' : ' days (') + videos + (videos === 1 ? ' video)' : ' videos)'),
+                dailySummary: (days, videos) => days + (days === 1 ? ' day (' : ' days (') + videos + (videos === 1 ? ' observed item)' : ' observed items)'),
                 noHistoryWait: 'No history yet. Watch a video on YouTube and wait a moment.',
                 noWatchHistory: 'No watch history yet.',
-                videoCount: n => n + (n === 1 ? ' video' : ' videos'),
+                videoCount: n => n + (n === 1 ? ' observed item' : ' observed items'),
                 weekdays: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
                 formatMonth: (y, mo) => MONTH_NAMES_EN[mo - 1] + ' ' + y,
                 loadingSubs: 'Loading subscriptions...',
@@ -1132,8 +1153,8 @@ def _get_ui_html() -> str:
                                     <img src="${safeUrl(v.thumbnail, '')}" alt="">
                                     <div class="info">
                                         <div class="title">${escapeHtml(v.title)}</div>
-                                        <div class="channel">${escapeHtml(v.channel)}</div>
-                                        <div class="meta">${escapeHtml(v.duration)} · ${formatTime(v.timestamp)}</div>
+                                        <div class="channel">${escapeHtml(v.channel)}${v.video_type === "short" || v.duration === "Shorts" || (v.url || "").includes("/shorts/") ? " · Shorts" : ""}</div>
+                                        <div class="meta">${escapeHtml(v.video_type === "short" || v.duration === "Shorts" || (v.url || "").includes("/shorts/") ? "Shorts" : v.duration)} · ${formatTime(v.timestamp)}</div>
                                     </div>
                                 </a>
                             `).join('')}
@@ -1169,7 +1190,7 @@ def _get_ui_html() -> str:
                     <a href="${safeUrl(v.url)}" target="_blank" rel="noopener noreferrer" class="video" style="text-decoration:none;color:inherit;display:block;margin-bottom:8px;">
                         <div class="info">
                             <div class="title">${escapeHtml(v.title)}</div>
-                            <div class="channel">${escapeHtml(v.channel)}</div>
+                            <div class="channel">${escapeHtml(v.channel)}${v.video_type === "short" || v.duration === "Shorts" || (v.url || "").includes("/shorts/") ? " · Shorts" : ""}</div>
                         </div>
                     </a>
                 `).join('');
@@ -1396,8 +1417,8 @@ def _get_ui_html() -> str:
                     <img src="${safeUrl(v.thumbnail, '')}" alt="">
                     <div class="info">
                         <div class="title">${escapeHtml(v.title)}</div>
-                        <div class="channel">${escapeHtml(v.channel)}</div>
-                        <div class="meta">${escapeHtml(v.duration)}</div>
+                        <div class="channel">${escapeHtml(v.channel)}${v.video_type === "short" || v.duration === "Shorts" || (v.url || "").includes("/shorts/") ? " · Shorts" : ""}</div>
+                        <div class="meta">${escapeHtml(v.video_type === "short" || v.duration === "Shorts" || (v.url || "").includes("/shorts/") ? "Shorts" : v.duration)}</div>
                     </div>
                 </a>
             `).join('');
@@ -1613,13 +1634,15 @@ def main() -> None:
         mqtt_pub.publish_recommended(fetcher.recommended_data or [])
         mqtt_pub.publish_cookies_valid(fetcher.cookies_valid)
         mqtt_pub.publish_recent_watched(fetcher.history_data or [])
+        with _history_lock:
+            mqtt_pub.publish_history_counts(load_history())
         _last_published_cookies_valid = fetcher.cookies_valid
 
     _LOGGER.info("[%s] 백그라운드 갱신 스레드 시작 (interval=%ds)", "85%", interval)
     thread = threading.Thread(target=fetch_loop, daemon=True)
     thread.start()
 
-    server = HTTPServer(("0.0.0.0", port), YouTubeMonitoringHandler)
+    server = HTTPServer(("0.0.0.0" if os.environ.get("SUPERVISOR_TOKEN") else "127.0.0.1", port), YouTubeMonitoringHandler)
     _LOGGER.info("[%s] HTTP 서버 대기 중 | port=%s", "95%", port)
     _LOGGER.info("[%s] 에드온 정상 실행 | 쿠키=%s | http://0.0.0.0:%s", "100%", "유효" if cookies_ok else "무효", port)
 

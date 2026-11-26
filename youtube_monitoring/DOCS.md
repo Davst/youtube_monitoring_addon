@@ -1,3 +1,5 @@
+> Development branch: install **YouTube Monitoring Dev** through Home Assistant Ingress. Direct LAN/API and cross-origin userscript access are disabled. See [test instructions](docs/development-testing.md).
+
 # YouTube Monitoring Add-on 문서
 
 ## 목차
@@ -24,7 +26,7 @@
 | `/data/yt_subscriptions.json` | 구독 스냅샷, 월별 구독 변경 |
 
 - 시청 기록 형식: `{ "YYYY-MM-DD": [ { "video_id", "title", "channel", ... } ] }`
-- **Shorts 미기록**: v1.4.8부터 Shorts는 저장하지 않으며, API·웹 UI에서도 제외. 기존 파일에 있는 Shorts는 표시/통계에서 필터링
+- **Shorts included (development)**: Stored and shown with `video_type: "short"`; regular videos use `video_type: "video"`. Monthly breakdowns include both.
 - **쿠키 만료 시에도 데이터 유지**: 디스크에 저장되므로 쿠키 갱신 후 정상 복구
 - **시청 기록 날짜**: 설정한 `timezone` 기준으로 저장 (기본 Asia/Seoul)
 
@@ -143,7 +145,7 @@
 
 ### GET /api/stats
 
-월별 통계만 반환합니다. Shorts는 제외된 기록 기준입니다.
+Returns monthly distinct observed-item counts, including Shorts. These are not play counts or watch duration.
 
 **응답 예시:**
 
@@ -211,8 +213,8 @@ Content-Type: application/json
 
 - `video_id`: **필수**
 - `title`, `channel`, `duration`, `url`: 선택
-- 5분 내 같은 `video_id`는 중복 저장하지 않음
-- **Shorts** URL(`/shorts/`) 또는 `duration: "Shorts"`인 경우 저장하지 않고 `{"status": "skipped", "reason": "shorts"}` 반환
+- Archive deduplication is by `video_id` for its entire lifetime; the configured debounce window also applies to ingestion.
+- **Shorts**: `/shorts/` URLs, `duration: "Shorts"` or `video_type: "short"` are accepted and normalized to a YouTube Shorts URL.
 
 ### POST /api/refresh/recommended
 
@@ -307,3 +309,7 @@ YouTube가 요청을 제한할 때 발생합니다. **scan_interval**을 120초 
 ### 쿠키 만료 후 데이터
 
 시청 기록·구독 변경은 JSON 파일에 저장되어 **쿠키와 무관하게 유지**됩니다. 쿠키만 새로 설정하면 기존 데이터 위에 계속 누적됩니다.
+
+## Development limitations and cookie review
+
+See [Shorts support](docs/shorts-support.md) for polling bounds, ordering, deduplication semantics, MQTT counts and required live checks.

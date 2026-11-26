@@ -77,6 +77,7 @@ def add_entry(
     url: str,
     duration: str = "N/A",
     timestamp: datetime | None = None,
+    video_type: str | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     """새 항목 추가. 해당 날짜 리스트 맨 앞에 삽입."""
     ts = timestamp or datetime.now()
@@ -89,6 +90,7 @@ def add_entry(
         "url": url,
         "duration": duration,
         "timestamp": ts.isoformat(),
+        "video_type": video_type or ("short" if _is_shorts({"duration": duration, "channel": channel, "url": url}) else "video"),
     }
     if date_str not in history:
         history[date_str] = []
@@ -108,7 +110,9 @@ def has_video_id(history: dict[str, list[dict[str, Any]]], video_id: str) -> boo
 def _is_shorts(entry: dict[str, Any]) -> bool:
     """Shorts 여부: duration 또는 channel로 판별."""
     return (
-        entry.get("duration") == "Shorts"
+        entry.get("video_type") == "short"
+        or (isinstance(entry.get("url"), str) and "/shorts/" in entry["url"])
+        or entry.get("duration") == "Shorts"
         or entry.get("channel") == "YouTube Shorts"
     )
 

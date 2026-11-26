@@ -24,14 +24,16 @@ except ImportError:
 
 import requests
 
+from app.history_store import get_monthly_breakdown, _is_shorts
+
 _LOGGER = logging.getLogger(__name__)
 
 DISCOVERY_PREFIX = "homeassistant"
-NODE_ID = "youtube_monitoring"
+NODE_ID = "youtube_monitoring_dev"
 
 _DEVICE = {
     "identifiers": [NODE_ID],
-    "name": "YouTube Monitoring",
+    "name": "YouTube Monitoring Dev",
     "manufacturer": "우*만",
     "model": "토스 1000-1261-7813",
     "sw_version": "커피 한잔은 사랑입니다",
@@ -91,11 +93,11 @@ class MqttPublisher:
             try:
                 self.client = mqtt.Client(
                     mqtt.CallbackAPIVersion.VERSION1,  # type: ignore[attr-defined]
-                    client_id="youtube_monitoring",
+                    client_id=NODE_ID,
                     clean_session=True,
                 )
             except (AttributeError, TypeError):
-                self.client = mqtt.Client(client_id="youtube_monitoring", clean_session=True)
+                self.client = mqtt.Client(client_id=NODE_ID, clean_session=True)
             if self.username:
                 self.client.username_pw_set(self.username, self.password or "")
             self.client.on_connect = self._on_connect
@@ -147,7 +149,7 @@ class MqttPublisher:
         for i in range(1, 4):
             cfg = {
                 "name": f"YouTube 추천 {i}",
-                "unique_id": f"youtube_recommended_{i}",
+                "unique_id": f"{NODE_ID}_recommended_{i}",
                 "state_topic": f"{NODE_ID}/recommended_{i}/state",
                 "json_attributes_topic": f"{NODE_ID}/recommended_{i}/attributes",
                 "icon": "mdi:youtube",
@@ -161,7 +163,7 @@ class MqttPublisher:
         # 쿠키 유효성 binary_sensor
         cfg_cookies = {
             "name": "YouTube 쿠키 유효",
-            "unique_id": "youtube_cookies_valid",
+            "unique_id": f"{NODE_ID}_cookies_valid",
             "state_topic": f"{NODE_ID}/cookies_valid/state",
             "device_class": "connectivity",
             "payload_on": "ON",
@@ -177,7 +179,7 @@ class MqttPublisher:
         # 추천 영상 개수 sensor (자동화 트리거용)
         cfg_count = {
             "name": "YouTube 추천 개수",
-            "unique_id": "youtube_recommended_count",
+            "unique_id": f"{NODE_ID}_recommended_count",
             "state_topic": f"{NODE_ID}/recommended_count/state",
             "icon": "mdi:counter",
             "device": _DEVICE,
@@ -190,7 +192,7 @@ class MqttPublisher:
         # 최근 시청 영상 sensor (state=가장 최근 영상 제목, attrs=상세 + 최근 5개)
         cfg_recent = {
             "name": "YouTube 최근 시청 영상",
-            "unique_id": "youtube_recent_watched",
+            "unique_id": f"{NODE_ID}_recent_watched",
             "state_topic": f"{NODE_ID}/recent_watched/state",
             "json_attributes_topic": f"{NODE_ID}/recent_watched/attributes",
             "icon": "mdi:youtube-tv",
@@ -200,6 +202,22 @@ class MqttPublisher:
             f"{DISCOVERY_PREFIX}/sensor/{NODE_ID}/recent_watched/config",
             cfg_recent, retain=True,
         )
+
+        for kind in ("shorts", "videos"):
+            self._publish(
+                f"{DISCOVERY_PREFIX}/sensor/{NODE_ID}/observed_{kind}/config",
+                {"name": f"YouTube observed {kind}",
+                 "unique_id": f"{NODE_ID}_observed_{kind}",
+                 "state_topic": f"{NODE_ID}/observed_{kind}/state",
+                 "icon": "mdi:counter", "device": _DEVICE},
+            )
+
+    def publish_history_counts(self, history: dict) -> None:
+        """Distinct archived IDs, not plays or watch duration."""
+        breakdown = get_monthly_breakdown(history)
+        for kind in ("shorts", "videos"):
+            self._publish(f"{NODE_ID}/observed_{kind}/state",
+                          str(sum(month[kind] for month in breakdown.values())))
 
     def publish_recommended(self, videos: list[dict]) -> None:
         """추천 영상 3개를 sensor 상태/속성으로 발행."""
@@ -218,6 +236,7 @@ class MqttPublisher:
                     "url": v.get("url", ""),
                     "thumbnail": v.get("thumbnail", ""),
                     "duration": v.get("duration", ""),
+                    "video_type": "short" if _is_shorts(v) else "video",
                     "view_count": v.get("view_count", ""),
                     "published": v.get("published", ""),
                 })
@@ -261,6 +280,7 @@ class MqttPublisher:
                 "url": v.get("url", ""),
                 "thumbnail": v.get("thumbnail", ""),
                 "duration": v.get("duration", ""),
+                "video_type": "short" if _is_shorts(v) else "video",
             })
 
         # YouTube history 페이지에는 정확한 시청 시각이 없음.
@@ -274,6 +294,7 @@ class MqttPublisher:
             "url": latest.get("url", ""),
             "thumbnail": latest.get("thumbnail", ""),
             "duration": latest.get("duration", ""),
+            "video_type": "short" if _is_shorts(latest) else "video",
             "observed_at": observed_at,
             "recent_videos": recent_list,
         })

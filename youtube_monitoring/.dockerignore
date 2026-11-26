@@ -1,0 +1,10 @@
+__pycache__
+*.pyc
+*cookies*.txt
+*cookies*.txt.bak
+.yt_cookies_*
+yt_history.json
+yt_subscriptions.json
+.env
+.venv
+venv

@@ -1,3 +1,5 @@
+> Development branch: install **YouTube Monitoring Dev** through Home Assistant Ingress. Direct LAN/API and cross-origin userscript access are disabled. See [test instructions](docs/development-testing.md).
+
 # YouTube Monitoring Add-on
 
 A standalone Home Assistant Add-on that tracks your YouTube watch history (daily/monthly), subscriptions, and recommended videos using only YouTube cookies.
@@ -9,7 +11,7 @@ A standalone Home Assistant Add-on that tracks your YouTube watch history (daily
 - Cookie-based watch history polling (default interval: 60s)
 - Automatic cookie refresh (saves response cookies + rotates Google cookies every 10 minutes, with HA notification on failure)
 - Multi-channel collection (`scan_all_channels`: merges main channel and Brand Accounts)
-- Daily history & Monthly calendar view (Shorts excluded)
+- Daily history & Monthly calendar view (including Shorts)
 - Subscriptions list with thumbnails, subscriber counts, `@handles`, and sorting (Alphabetical / By Subscribers)
 - Monthly subscription changes (added / removed)
 - Recommended videos with manual refresh (10-minute cooldown)
@@ -45,3 +47,7 @@ A standalone Home Assistant Add-on that tracks your YouTube watch history (daily
 ## License
 
 [MIT License](../LICENSE)
+
+## Shorts development increment
+
+Shorts are archived with `video_type: "short"`, shown in daily and calendar views, and included in monthly breakdowns. MQTT exposes distinct archived Shorts/video counts. These are observations, not play totals or watch time. See [scope and live-use review](docs/shorts-support.md).
